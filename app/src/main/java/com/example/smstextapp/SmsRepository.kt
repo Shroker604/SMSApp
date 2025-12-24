@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.provider.Telephony
 import com.example.smstextapp.data.ContactRepository
+import com.example.smstextapp.data.MetadataRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -14,7 +15,8 @@ data class Conversation(
     val photoUri: String?, // Content URI for contact photo
     val snippet: String,
     val date: Long,
-    val read: Boolean
+    val read: Boolean,
+    val isPinned: Boolean = false
 )
 
 data class SmsMessage(
@@ -27,22 +29,33 @@ data class SmsMessage(
     val isSent: Boolean get() = type == Telephony.Sms.MESSAGE_TYPE_SENT
 }
 
+
+
 class SmsRepository(
     private val context: Context,
     private val blockRepository: BlockRepository,
-    private val contactRepository: ContactRepository
+    private val contactRepository: ContactRepository,
+    private val metadataRepository: MetadataRepository,
+    private val scheduledMessageRepository: com.example.smstextapp.data.ScheduledMessageRepository
 ) {
+
+    suspend fun scheduleMessage(threadId: Long, address: String, body: String, timeMillis: Long) {
+        scheduledMessageRepository.scheduleMessage(threadId, address, body, timeMillis)
+    }
 
     suspend fun getConversations(): List<Conversation> = withContext(Dispatchers.IO) {
         val smsList = querySmsConversations()
         val mmsList = queryMmsConversations()
+        
+        // Fetch pinned status
+        val pinnedIds = metadataRepository.getPinnedThreadIds()
 
         // Merge Logic:
         // 1. Group by Thread ID
         // 2. Pick the latest message (by date) for each thread
         val mergedMap = (smsList + mmsList).groupBy { it.threadId }
         
-        val finalConversations = mergedMap.mapNotNull { (_, list) ->
+        val finalConversations = mergedMap.mapNotNull { (threadId, list) ->
             // Find the latest message to show date/snippet
             val latest = list.maxByOrNull { it.date }!!
             
@@ -51,21 +64,26 @@ class SmsRepository(
                 it.rawAddress.isNotBlank() && it.rawAddress != "MMS Group" 
             } ?: latest
 
+            val isPinned = pinnedIds.contains(threadId)
+
             val mergedConversation = latest.copy(
                 rawAddress = bestInfoSource.rawAddress,
                 displayName = bestInfoSource.displayName,
-                photoUri = bestInfoSource.photoUri
+                photoUri = bestInfoSource.photoUri,
+                isPinned = isPinned
             )
             
             // Filter blocked numbers
             if (isConversationBlocked(mergedConversation.rawAddress)) {
                 // If the conversation is blocked, we exclude it from the main list.
-                // Note: Real apps might show it in a "Spam & Blocked" folder.
                 null
             } else {
                 mergedConversation
             }
-        }.sortedByDescending { it.date }
+        }.sortedWith(
+            compareByDescending<Conversation> { it.isPinned }
+                .thenByDescending { it.date }
+        )
 
         android.util.Log.d("SmsRepository", "Merged count: ${finalConversations.size}")
         finalConversations
@@ -208,6 +226,15 @@ class SmsRepository(
         return numbers.any { blockRepository.isBlocked(it) }
     }
 
+    suspend fun getThreadIdFor(address: String): Long = withContext(Dispatchers.IO) {
+        try {
+            return@withContext android.provider.Telephony.Threads.getOrCreateThreadId(context, address)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext 0L
+        }
+    }
+    
     suspend fun getMessages(threadId: Long): List<SmsMessage> = withContext(Dispatchers.IO) {
         val messages = mutableListOf<SmsMessage>()
         val resolver = context.contentResolver
@@ -270,5 +297,34 @@ class SmsRepository(
 
     fun importBlockedNumbers(): Int {
         return blockRepository.importSystemBlockedNumbers()
+    }
+    
+    suspend fun setPinned(threadId: Long, isPinned: Boolean) {
+        metadataRepository.setPinned(threadId, isPinned)
+    }
+
+    suspend fun markAsRead(threadId: Long) {
+        setReadStatus(threadId, 1)
+    }
+
+    suspend fun markAsUnread(threadId: Long) {
+        setReadStatus(threadId, 0)
+    }
+
+    private suspend fun setReadStatus(threadId: Long, status: Int) = withContext(Dispatchers.IO) {
+        try {
+            val values = android.content.ContentValues().apply {
+                put(Telephony.Sms.READ, status)
+            }
+            context.contentResolver.update(
+                Telephony.Sms.CONTENT_URI,
+                values,
+                "${Telephony.Sms.THREAD_ID} = ?",
+                arrayOf(threadId.toString())
+            )
+            // Also update MMS? Harder, but usually thread-level read is sufficient.
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }

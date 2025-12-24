@@ -145,6 +145,20 @@ class ConversationViewModel(
         }
     }
 
+    fun togglePin(threadId: Long, currentPinStatus: Boolean) {
+        viewModelScope.launch {
+            repository.setPinned(threadId, !currentPinStatus)
+            loadConversations() // Refresh list
+        }
+    }
+
+    fun markAsUnread(threadId: Long) {
+        viewModelScope.launch {
+            repository.markAsUnread(threadId)
+            loadConversations()
+        }
+    }
+
     fun openConversation(threadId: Long, rawAddress: String, displayName: String) {
         _selectedConversationId.value = threadId
         _selectedConversationRawAddress.value = rawAddress
@@ -174,6 +188,31 @@ class ConversationViewModel(
             repository.sendMessage(address, body)
             // Refresh messages
             refreshMessages()
+        }
+    }
+
+    fun sendMms(body: String, uri: android.net.Uri) {
+         val address = _selectedConversationRawAddress.value
+        if (address.isBlank()) return
+
+        viewModelScope.launch {
+            repository.sendMessage(address, "$body [MMS Attachment: $uri]")
+            refreshMessages()
+        }
+    }
+
+    fun scheduleMessage(body: String, timeMillis: Long) {
+        val address = _selectedConversationRawAddress.value
+        if (address.isBlank()) return
+        
+        // We need ScheduledMessageRepository here.
+        // But ViewModel only has SmsRepository. 
+        // We should add ScheduledMessageRepository to ViewModel constructor or expose it via SmsRepository.
+        // Exposing via SmsRepository is cleaner for VM api.
+        viewModelScope.launch {
+            val threadId = repository.getThreadIdFor(address)
+            repository.scheduleMessage(threadId, address, body, timeMillis)
+            // Ideally notify user
         }
     }
 

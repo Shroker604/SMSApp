@@ -1,11 +1,14 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.google.devtools.ksp")
 }
 
 android {
     namespace = "com.example.smstextapp"
     compileSdk = 34
+    
+    // ... (rest of android block unchanged)
 
     defaultConfig {
         applicationId = "com.example.smstextapp"
@@ -58,11 +61,19 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     
+    // Room Database
+    val room_version = "2.6.1"
+    implementation("androidx.room:room-runtime:$room_version")
+    implementation("androidx.room:room-ktx:$room_version")
+    ksp("androidx.room:room-compiler:$room_version")
+
+    
     // Permissions (Accompanist) - checking if still needed or if there are newer ways, 
     // but sticking to standard permissions handling is fine too. 
     // We'll add accompanist for easier permission handling in Compose if needed.
     implementation("com.google.accompanist:accompanist-permissions:0.32.0")
     implementation("io.coil-kt:coil-compose:2.5.0")
+    implementation("androidx.work:work-runtime-ktx:2.8.1")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

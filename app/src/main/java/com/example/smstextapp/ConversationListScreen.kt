@@ -5,8 +5,10 @@ import android.text.format.DateUtils
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -109,18 +111,25 @@ fun ConversationListScreen(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ConversationItem(
     conversation: Conversation,
     viewModel: ConversationViewModel = viewModel()
 ) {
+    var showMenu by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { 
-                viewModel.openConversation(conversation.threadId, conversation.rawAddress, conversation.displayName) 
-            }
-            .padding(16.dp),
+            .combinedClickable(
+                onClick = { 
+                    viewModel.openConversation(conversation.threadId, conversation.rawAddress, conversation.displayName) 
+                },
+                onLongClick = { showMenu = true }
+            )
+            .padding(16.dp)
+            .background(if (conversation.isPinned) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f) else Color.Transparent),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Avatar
@@ -132,14 +141,28 @@ fun ConversationItem(
         Spacer(modifier = Modifier.width(16.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = conversation.displayName,
-                style = MaterialTheme.typography.titleMedium
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = conversation.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = if (conversation.read) FontWeight.Normal else FontWeight.Bold,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (conversation.isPinned) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Default.Star, // Using Star as Pin equivalent if PushPin missing, or standard Star
+                        contentDescription = "Pinned",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
             Text(
                 text = conversation.snippet,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (conversation.read) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                fontWeight = if (conversation.read) FontWeight.Normal else FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -152,5 +175,27 @@ fun ConversationItem(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        
+        // Context Menu
+        DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text(if (conversation.isPinned) "Unpin" else "Pin") },
+                onClick = {
+                    viewModel.togglePin(conversation.threadId, conversation.isPinned)
+                    showMenu = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Mark as unread") },
+                onClick = {
+                    viewModel.markAsUnread(conversation.threadId)
+                    showMenu = false
+                }
+            )
+            // Future options: Block, Delete
+        }
     }
 }

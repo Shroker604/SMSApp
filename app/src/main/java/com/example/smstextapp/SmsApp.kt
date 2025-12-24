@@ -4,9 +4,19 @@ import android.app.Application
 import com.example.smstextapp.data.ContactRepository
 
 class AppContainer(context: android.content.Context) {
+    private val database = androidx.room.Room.databaseBuilder(
+        context,
+        com.example.smstextapp.data.AppDatabase::class.java, "sms-metadata-db"
+    )
+    .fallbackToDestructiveMigration()
+    .build()
+
+    val metadataRepository = com.example.smstextapp.data.MetadataRepository(database.metadataDao())
+    val scheduledMessageRepository = com.example.smstextapp.data.ScheduledMessageRepository(context, database.scheduledMessageDao())
     val blockRepository = BlockRepository(context)
     val contactRepository = ContactRepository(context)
-    val smsRepository = SmsRepository(context, blockRepository, contactRepository)
+    // SmsRepository will need metadataRepository soon
+    val smsRepository = SmsRepository(context, blockRepository, contactRepository, metadataRepository, scheduledMessageRepository)
 }
 
 class SmsApp : Application() {
