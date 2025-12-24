@@ -38,6 +38,8 @@ fun ConversationDetailScreen(
 
     var showMenu by remember { mutableStateOf(false) }
 
+    val isBlocked by viewModel.isCurrentConversationBlocked.collectAsState()
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -56,9 +58,9 @@ fun ConversationDetailScreen(
                         onDismissRequest = { showMenu = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Block") },
+                            text = { Text(if (isBlocked) "Unblock" else "Block") },
                             onClick = { 
-                                viewModel.blockCurrentConversation()
+                                viewModel.toggleBlockStatus()
                                 showMenu = false 
                             }
                         )

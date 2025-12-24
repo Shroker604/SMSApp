@@ -42,14 +42,37 @@ class SmsRepository(
         // 2. Pick the latest message (by date) for each thread
         val mergedMap = (smsList + mmsList).groupBy { it.threadId }
         
-        val finalConversations = mergedMap.map { (_, list) ->
-            // In a real app, we might want to check for read status across all, 
-            // but for now, we just take the latest message to show in the list.
-            list.maxByOrNull { it.date }!!
+        val finalConversations = mergedMap.mapNotNull { (_, list) ->
+            // Find the latest message to show date/snippet
+            val latest = list.maxByOrNull { it.date }!!
+            
+            // Find the best source for Contact Info (SMS usually has it, MMS might be placeholder)
+            val bestInfoSource = list.firstOrNull { 
+                it.rawAddress.isNotBlank() && it.rawAddress != "MMS Group" 
+            } ?: latest
+
+            val mergedConversation = latest.copy(
+                rawAddress = bestInfoSource.rawAddress,
+                displayName = bestInfoSource.displayName,
+                photoUri = bestInfoSource.photoUri
+            )
+            
+            // Filter blocked numbers
+            if (isConversationBlocked(mergedConversation.rawAddress)) {
+                // If the conversation is blocked, we exclude it from the main list.
+                // Note: Real apps might show it in a "Spam & Blocked" folder.
+                null
+            } else {
+                mergedConversation
+            }
         }.sortedByDescending { it.date }
 
         android.util.Log.d("SmsRepository", "Merged count: ${finalConversations.size}")
         finalConversations
+    }
+    
+    fun getBlockedNumbers(): Set<String> {
+        return blockRepository.getAllBlockedNumbers()
     }
 
     private fun querySmsConversations(): List<Conversation> {
@@ -243,5 +266,9 @@ class SmsRepository(
     
     fun unblockNumber(number: String) {
         blockRepository.unblock(number)
+    }
+
+    fun importBlockedNumbers(): Int {
+        return blockRepository.importSystemBlockedNumbers()
     }
 }

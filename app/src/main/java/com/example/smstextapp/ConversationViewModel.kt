@@ -70,17 +70,79 @@ class ConversationViewModel(
         _searchQuery.value = query
     }
 
-    fun blockCurrentConversation() {
+    // Block State
+    private val _isCurrentConversationBlocked = MutableStateFlow(false)
+    val isCurrentConversationBlocked: StateFlow<Boolean> = _isCurrentConversationBlocked
+
+    // Check if the current conversation is blocked
+    fun checkBlockStatus() {
+        val address = _selectedConversationRawAddress.value
+        if (address.isBlank()) {
+            _isCurrentConversationBlocked.value = false
+            return
+        }
+        val numbers = address.split(";")
+        // If ANY number in the thread is blocked, we consider the thread blocked
+        val isBlocked = numbers.any { 
+            val blocked = repository.getBlockedNumbers().contains(it.replace(Regex("[^0-9+]"), ""))
+            blocked
+        }
+        _isCurrentConversationBlocked.value = isBlocked
+        
+        // Also check against block repo directly if needed, but repo.getBlockedNumbers() is robust.
+        // Actually, let's use the repo's internal check if possible, but we don't have access to BlockRepo here directly.
+        // We'll rely on our manual normalized check matching BlockRepository's normalize.
+    }
+
+    fun toggleBlockStatus() {
         val address = _selectedConversationRawAddress.value
         if (address.isBlank()) return
         
-        // Block all numbers associated with this thread (split by ;)
         val numbers = address.split(";")
-        numbers.forEach { repository.blockNumber(it) }
+        val currentlyBlocked = _isCurrentConversationBlocked.value
         
-        // Close and refresh to remove from list
-        closeConversation()
-        loadConversations()
+        viewModelScope.launch {
+            if (currentlyBlocked) {
+                // Unblock all
+                numbers.forEach { repository.unblockNumber(it) }
+            } else {
+                // Block all
+                numbers.forEach { repository.blockNumber(it) }
+            }
+            
+            // Refresh state
+            checkBlockStatus()
+            
+            // Refresh conversation list (to hide/show item)
+            loadConversations()
+            
+            // If we just blocked it, we usually close the conversation? 
+            // Google Messages behavior: You block it, it kicks you back to list.
+            // If you unblock it, you stay.
+            if (!currentlyBlocked) { // We just blocked it
+                 closeConversation()
+            }
+        }
+    }
+    
+    fun getBlockedNumbers(): Set<String> {
+        return repository.getBlockedNumbers()
+    }
+    
+    fun unblockNumber(number: String) {
+        viewModelScope.launch {
+            repository.unblockNumber(number)
+            loadConversations() // Refresh list as unblocked items might reappear
+        }
+    }
+
+    fun importBlockedNumbers(onComplete: (Int) -> Unit) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val count = repository.importBlockedNumbers()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                onComplete(count)
+            }
+        }
     }
 
     fun openConversation(threadId: Long, rawAddress: String, displayName: String) {
@@ -88,6 +150,7 @@ class ConversationViewModel(
         _selectedConversationRawAddress.value = rawAddress
         _selectedConversationDisplayName.value = displayName
         viewModelScope.launch {
+            checkBlockStatus()
             // Continuously load or just load once? ideally observe.
             // For now, load once.
             refreshMessages()

@@ -31,8 +31,7 @@ import com.google.accompanist.permissions.rememberMultiplePermissionsState
 @Composable
 fun ConversationListScreen(
     viewModel: ConversationViewModel = viewModel(),
-    sharedPrefs: android.content.SharedPreferences,
-    currentThemeModeIdx: MutableState<Int>
+    showSettings: MutableState<Boolean>
 ) {
     // Request permissions...
     val permissionsState = com.google.accompanist.permissions.rememberMultiplePermissionsState(
@@ -53,8 +52,6 @@ fun ConversationListScreen(
     if (permissionsState.allPermissionsGranted) {
         val conversations by viewModel.filteredConversations.collectAsState()
         val searchQuery by viewModel.searchQuery.collectAsState()
-        
-        val showSettingsDialog = remember { mutableStateOf(false) }
 
         Scaffold(
             topBar = {
@@ -62,7 +59,7 @@ fun ConversationListScreen(
                     CenterAlignedTopAppBar(
                         title = { Text("Messages") },
                         actions = {
-                            IconButton(onClick = { showSettingsDialog.value = true }) {
+                            IconButton(onClick = { showSettings.value = true }) {
                                 Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
                             }
                         }
@@ -82,37 +79,6 @@ fun ConversationListScreen(
                 }
             }
         ) { padding ->
-             // Dialog
-             if (showSettingsDialog.value) {
-                AlertDialog(
-                    onDismissRequest = { showSettingsDialog.value = false },
-                    title = { Text("Select Theme") },
-                    text = {
-                        Column {
-                            ThemeOption("System Default", currentThemeModeIdx.value == 0) {
-                                currentThemeModeIdx.value = 0
-                                sharedPrefs.edit().putInt("theme_mode", 0).apply()
-                                showSettingsDialog.value = false
-                            }
-                            ThemeOption("Light", currentThemeModeIdx.value == 1) {
-                                currentThemeModeIdx.value = 1
-                                sharedPrefs.edit().putInt("theme_mode", 1).apply()
-                                showSettingsDialog.value = false
-                            }
-                            ThemeOption("Dark", currentThemeModeIdx.value == 2) {
-                                currentThemeModeIdx.value = 2
-                                sharedPrefs.edit().putInt("theme_mode", 2).apply()
-                                showSettingsDialog.value = false
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showSettingsDialog.value = false }) {
-                            Text("Close")
-                        }
-                    }
-                )
-             }
              // Content
              if (conversations.isEmpty()) {
                  Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {

@@ -10,14 +10,31 @@ class ContactRepository(private val context: Context) {
 
     fun resolveRecipientInfo(recipientIds: String): RecipientInfo {
         if (recipientIds.isBlank()) return RecipientInfo("", "Unknown", null)
-        val ids = recipientIds.split(" ")
+        // input might be "123" (old) or "+1555..." (new) or "1 2" (raw ids)
+        // With simplified SMS query, we usually get a single raw number.
+        
+        val inputs = recipientIds.split(" ")
         
         val numbers = mutableListOf<String>()
         val names = mutableListOf<String>()
         var photoUri: String? = null
         
-        ids.forEach { id ->
-            val number = resolveSingleRecipientNumber(id)
+        inputs.forEach { input ->
+            // Heuristic: If it contains digits and (plus or len > 5), treat as number.
+            // If it's just small digits, might be an ID. 
+            // Better: Just try to use it as a number first.
+            
+            var number: String? = null
+            
+            // If it identifies as a phone number (roughly), use it.
+            if (input.any { it.isDigit() } && input.length > 2) {
+                 // Assume it's a number (or email)
+                 number = input
+            } else {
+                 // Try looking it up as an ID (legacy support for mms-sms provider)
+                 number = resolveSingleRecipientNumber(input)
+            }
+
             if (number != null) {
                 numbers.add(number)
                 val (name, photo) = resolveContactNameAndPhoto(number)
