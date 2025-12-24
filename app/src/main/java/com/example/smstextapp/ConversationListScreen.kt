@@ -4,6 +4,7 @@ import android.Manifest
 import android.text.format.DateUtils
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -29,9 +30,11 @@ import com.google.accompanist.permissions.rememberMultiplePermissionsState
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationListScreen(
-    viewModel: ConversationViewModel = viewModel()
+    viewModel: ConversationViewModel = viewModel(),
+    sharedPrefs: android.content.SharedPreferences,
+    currentThemeModeIdx: MutableState<Int>
 ) {
-    // Request both READ_SMS and READ_CONTACTS
+    // Request permissions...
     val permissionsState = com.google.accompanist.permissions.rememberMultiplePermissionsState(
         permissions = listOf(
             Manifest.permission.READ_SMS,
@@ -40,7 +43,7 @@ fun ConversationListScreen(
         )
     )
     
-    // Refresh conversations when permissions are granted or on start
+    // Refresh conversations...
     LaunchedEffect(permissionsState.allPermissionsGranted) {
         if (permissionsState.allPermissionsGranted) {
             viewModel.loadConversations()
@@ -51,11 +54,18 @@ fun ConversationListScreen(
         val conversations by viewModel.filteredConversations.collectAsState()
         val searchQuery by viewModel.searchQuery.collectAsState()
         
+        val showSettingsDialog = remember { mutableStateOf(false) }
+
         Scaffold(
             topBar = {
                 Column {
                     CenterAlignedTopAppBar(
-                        title = { Text("Messages") }
+                        title = { Text("Messages") },
+                        actions = {
+                            IconButton(onClick = { showSettingsDialog.value = true }) {
+                                Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
+                            }
+                        }
                     )
                     // Search Bar
                     OutlinedTextField(
@@ -72,6 +82,38 @@ fun ConversationListScreen(
                 }
             }
         ) { padding ->
+             // Dialog
+             if (showSettingsDialog.value) {
+                AlertDialog(
+                    onDismissRequest = { showSettingsDialog.value = false },
+                    title = { Text("Select Theme") },
+                    text = {
+                        Column {
+                            ThemeOption("System Default", currentThemeModeIdx.value == 0) {
+                                currentThemeModeIdx.value = 0
+                                sharedPrefs.edit().putInt("theme_mode", 0).apply()
+                                showSettingsDialog.value = false
+                            }
+                            ThemeOption("Light", currentThemeModeIdx.value == 1) {
+                                currentThemeModeIdx.value = 1
+                                sharedPrefs.edit().putInt("theme_mode", 1).apply()
+                                showSettingsDialog.value = false
+                            }
+                            ThemeOption("Dark", currentThemeModeIdx.value == 2) {
+                                currentThemeModeIdx.value = 2
+                                sharedPrefs.edit().putInt("theme_mode", 2).apply()
+                                showSettingsDialog.value = false
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showSettingsDialog.value = false }) {
+                            Text("Close")
+                        }
+                    }
+                )
+             }
+             // Content
              if (conversations.isEmpty()) {
                  Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                      Text(if (searchQuery.isNotEmpty()) "No matches found" else "No conversations")

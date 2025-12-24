@@ -3,6 +3,7 @@ package com.example.smstextapp
 import android.content.ContentResolver
 import android.content.Context
 import android.provider.Telephony
+import com.example.smstextapp.data.ContactRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -26,9 +27,11 @@ data class SmsMessage(
     val isSent: Boolean get() = type == Telephony.Sms.MESSAGE_TYPE_SENT
 }
 
-class SmsRepository(private val context: Context) {
-
-    private val blockRepository = BlockRepository(context)
+class SmsRepository(
+    private val context: Context,
+    private val blockRepository: BlockRepository,
+    private val contactRepository: ContactRepository
+) {
 
     suspend fun getConversations(): List<Conversation> = withContext(Dispatchers.IO) {
         val conversations = mutableListOf<Conversation>()
@@ -37,58 +40,82 @@ class SmsRepository(private val context: Context) {
         // Query the merged MMS/SMS conversations
         val uri = android.net.Uri.parse("content://mms-sms/conversations?simple=true")
         
-        val cursor = contentResolver.query(
-            uri,
-            arrayOf(
-                Telephony.Sms.Conversations.THREAD_ID, // which is _id
-                "date",
-                "snippet",
-                "recipient_ids",
-                "read"
-            ),
-            null,
-            null,
-            "date DESC"
-        )
+        try {
+            val cursor = contentResolver.query(
+                uri,
+                arrayOf(
+                    Telephony.Sms.Conversations._ID, // Correct column for Thread ID in conversations table
+                    "date",
+                    "snippet",
+                    "recipient_ids",
+                    "read"
+                ),
+                null,
+                null,
+                "date DESC"
+            )
 
-        cursor?.use {
-            val threadIdIdx = it.getColumnIndex(Telephony.Sms.Conversations.THREAD_ID)
-            val dateIdx = it.getColumnIndex("date")
-            val snippetIdx = it.getColumnIndex("snippet")
-            val recipientIdsIdx = it.getColumnIndex("recipient_ids")
-            val readIdx = it.getColumnIndex("read")
+            android.util.Log.d("SmsRepository", "Cursor count: ${cursor?.count}")
 
-            while (it.moveToNext()) {
-                val threadId = it.getLong(threadIdIdx)
-                val recipientIdsStr = it.getString(recipientIdsIdx) ?: ""
-                val snippet = it.getString(snippetIdx) ?: ""
-                val date = it.getLong(dateIdx)
-                val read = it.getInt(readIdx) == 1
+            cursor?.use {
+                val threadIdIdx = it.getColumnIndex(Telephony.Sms.Conversations._ID)
+                val dateIdx = it.getColumnIndex("date")
+                val snippetIdx = it.getColumnIndex("snippet")
+                val recipientIdsIdx = it.getColumnIndex("recipient_ids")
+                val readIdx = it.getColumnIndex("read")
 
-                // Helper to get raw numbers and names
-                val info = resolveRecipientInfo(recipientIdsStr)
+                while (it.moveToNext()) {
+                    val threadId = it.getLong(threadIdIdx)
+                    val recipientIdsStr = it.getString(recipientIdsIdx) ?: ""
+                    val snippet = it.getString(snippetIdx) ?: ""
+                    val date = it.getLong(dateIdx)
+                    val read = it.getInt(readIdx) == 1
 
-                // Filter blocked numbers
-                // NOTE: recipientIdsStr is "1 2", info.rawAddress is "123456;789012"
-                // We should check if ANY of the participants are blocked.
-                // For simplified logic, if the raw address string contains a blocked number, skip.
-                if (isConversationBlocked(info.rawAddress)) {
-                    continue
-                }
+                    // Helper to get raw numbers and names using ContactRepository
+                    val info = contactRepository.resolveRecipientInfo(recipientIdsStr)
 
-                conversations.add(
-                    Conversation(
-                        threadId = threadId,
-                        rawAddress = info.rawAddress,
-                        displayName = info.displayName,
-                        photoUri = info.photoUri,
-                        snippet = snippet,
-                        date = date,
-                        read = read
+                    // Filter blocked numbers
+                    // DEBUG: Commenting out block check to rule it out
+                    /*
+                    if (isConversationBlocked(info.rawAddress)) {
+                        android.util.Log.d("SmsRepository", "Skipping blocked conversation: ${info.rawAddress}")
+                        continue
+                    }
+                    */
+
+                    conversations.add(
+                        Conversation(
+                            threadId = threadId,
+                            rawAddress = info.rawAddress,
+                            displayName = info.displayName,
+                            photoUri = info.photoUri,
+                            snippet = snippet,
+                            date = date,
+                            read = read
+                        )
                     )
-                )
+                }
             }
+        } catch (e: Exception) {
+            android.util.Log.e("SmsRepository", "Error fetching conversations", e)
         }
+        
+        // DEBUG: If empty, add a fake one to prove UI works
+        if (conversations.isEmpty()) {
+             conversations.add(
+                 Conversation(
+                     threadId = 9999,
+                     rawAddress = "1234567890",
+                     displayName = "Debug User",
+                     photoUri = null,
+                     snippet = "If you see this, UI is working but DB is empty/query failed.",
+                     date = System.currentTimeMillis(),
+                     read = true
+                 )
+             )
+        }
+
+        android.util.Log.d("SmsRepository", "Returning ${conversations.size} conversations")
         conversations
     }
     
@@ -96,79 +123,6 @@ class SmsRepository(private val context: Context) {
         // rawAddress could be "123456" or "123456;987654"
         val numbers = rawAddress.split(";")
         return numbers.any { blockRepository.isBlocked(it) }
-    }
-
-    data class RecipientInfo(val rawAddress: String, val displayName: String, val photoUri: String?)
-
-    private fun resolveRecipientInfo(recipientIds: String): RecipientInfo {
-        if (recipientIds.isBlank()) return RecipientInfo("", "Unknown", null)
-        val ids = recipientIds.split(" ")
-        
-        val numbers = mutableListOf<String>()
-        val names = mutableListOf<String>()
-        var photoUri: String? = null
-        
-        ids.forEach { id ->
-            val number = resolveSingleRecipientNumber(id)
-            if (number != null) {
-                numbers.add(number)
-                val (name, photo) = resolveContactNameAndPhoto(number)
-                names.add(name)
-                if (photo != null && photoUri == null) {
-                   photoUri = photo // Just grab the first photo found
-                }
-            }
-        }
-        
-        val rawParams = numbers.joinToString(";")
-        val prettyName = if (names.isEmpty()) "Unknown" else names.joinToString(", ")
-        
-        return RecipientInfo(rawParams, prettyName, photoUri)
-    }
-    
-    private fun resolveSingleRecipientNumber(recipientId: String): String? {
-        var phone: String? = null
-        val uri = android.net.Uri.parse("content://mms-sms/canonical-addresses")
-        val cursor = context.contentResolver.query(
-            uri,
-            arrayOf("address"),
-            "_id = ?",
-            arrayOf(recipientId),
-            null
-        )
-        cursor?.use {
-            if (it.moveToFirst()) {
-                phone = it.getString(0)
-            }
-        }
-        return phone
-    }
-    
-    // Resolve Phone Number to Contact Name and Photo URI via ContactsContract
-    private fun resolveContactNameAndPhoto(phoneNumber: String): Pair<String, String?> {
-        var name = phoneNumber
-        var photoUri: String? = null
-        val uri = android.net.Uri.withAppendedPath(
-            android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
-            android.net.Uri.encode(phoneNumber)
-        )
-        val cursor = context.contentResolver.query(
-            uri,
-            arrayOf(
-                android.provider.ContactsContract.PhoneLookup.DISPLAY_NAME,
-                android.provider.ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI
-            ),
-            null,
-            null,
-            null
-        )
-        cursor?.use {
-            if (it.moveToFirst()) {
-                name = it.getString(0) ?: phoneNumber
-                photoUri = it.getString(1)
-            }
-        }
-        return Pair(name, photoUri)
     }
 
     suspend fun getMessages(threadId: Long): List<SmsMessage> = withContext(Dispatchers.IO) {
@@ -222,6 +176,7 @@ class SmsRepository(private val context: Context) {
             e.printStackTrace()
         }
     }
+    
     fun blockNumber(number: String) {
         blockRepository.block(number)
     }

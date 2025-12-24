@@ -72,8 +72,6 @@ fun MainScreen() {
         2 -> ThemeMode.DARK
         else -> ThemeMode.SYSTEM
     }
-    
-    val showSettingsDialog = remember { mutableStateOf(false) }
 
     com.example.smstextapp.ui.theme.AppTheme(themeMode = themeMode) {
         Surface(
@@ -85,102 +83,75 @@ fun MainScreen() {
             // Launcher for RoleManager result
             val roleManagerLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.StartActivityForResult()
-            ) { result ->
+            ) { _ ->
                 isDefaultSmsApp.value = isDefaultSmsApp(context)
             }
-
-            if (isDefaultSmsApp.value) {
-                Scaffold(
-                    topBar = {
-                        CenterAlignedTopAppBar(
-                            title = { Text("Messages") },
-                            actions = {
-                                IconButton(onClick = { showSettingsDialog.value = true }) {
-                                    Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
-                                }
-                            }
-                        )
-                    }
-                ) { padding ->
-                    Box(modifier = Modifier.padding(padding)) {
-                        val viewModel: ConversationViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-                        val selectedThreadId by viewModel.selectedConversationId.collectAsState()
-                        
-                        if (selectedThreadId != null) {
-                            ConversationDetailScreen(viewModel)
-                        } else {
-                            ConversationListScreen(viewModel)
-                        }
-                    }
-                }
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("This app needs to be the default SMS app to view messages.")
-                    Button(
-                        onClick = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                val roleManager = context.getSystemService(RoleManager::class.java)
-                                if (roleManager.isRoleAvailable(RoleManager.ROLE_SMS)) {
-                                    if (roleManager.isRoleHeld(RoleManager.ROLE_SMS)) {
-                                        isDefaultSmsApp.value = true
-                                    } else {
-                                        val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_SMS)
-                                        roleManagerLauncher.launch(intent)
-                                    }
-                                } else {
-                                    Toast.makeText(context, "SMS Role not available", Toast.LENGTH_SHORT).show()
-                                }
-                            } else {
-                                val intent = Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
-                                intent.putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, context.packageName)
-                                context.startActivity(intent)
-                            }
-                        },
-                        modifier = Modifier.padding(top = 16.dp)
-                    ) {
-                        Text("Set as Default SMS App")
-                    }
-                    
-                    TextButton(onClick = { isDefaultSmsApp.value = true }) {
-                        Text("Debug: Show List Anyway")
-                    }
-                }
-            }
             
-            if (showSettingsDialog.value) {
-                AlertDialog(
-                    onDismissRequest = { showSettingsDialog.value = false },
-                    title = { Text("Select Theme") },
-                    text = {
-                        Column {
-                            ThemeOption("System Default", currentThemeModeIdx.value == 0) {
-                                currentThemeModeIdx.value = 0
-                                sharedPrefs.edit().putInt("theme_mode", 0).apply()
-                                showSettingsDialog.value = false
+            // Layout
+            Scaffold(
+                content = { padding ->
+                    if (isDefaultSmsApp.value) {
+                         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+                             // Use Factory to create ViewModel with dependencies
+                             val viewModel: ConversationViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+                                 factory = ConversationViewModel.Factory
+                             )
+                             val selectedThreadId by viewModel.selectedConversationId.collectAsState()
+                             
+                             if (selectedThreadId != null) {
+                                 ConversationDetailScreen(viewModel)
+                             } else {
+                                 ConversationListScreen(
+                                     viewModel = viewModel,
+                                     sharedPrefs = sharedPrefs,
+                                     currentThemeModeIdx = currentThemeModeIdx
+                                 )
+                             }
+                         }
+                    } else {
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(padding),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "This app needs to be the default SMS app to view messages.",
+                                modifier = Modifier.padding(16.dp),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Button(
+                                onClick = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                        val roleManager = context.getSystemService(RoleManager::class.java)
+                                        if (roleManager.isRoleAvailable(RoleManager.ROLE_SMS)) {
+                                            if (roleManager.isRoleHeld(RoleManager.ROLE_SMS)) {
+                                                isDefaultSmsApp.value = true
+                                            } else {
+                                                val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_SMS)
+                                                roleManagerLauncher.launch(intent)
+                                            }
+                                        } else {
+                                            Toast.makeText(context, "SMS Role not available", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } else {
+                                        val intent = Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
+                                        intent.putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, context.packageName)
+                                        context.startActivity(intent)
+                                    }
+                                },
+                                modifier = Modifier.padding(top = 16.dp)
+                            ) {
+                                Text("Set as Default SMS App")
                             }
-                            ThemeOption("Light", currentThemeModeIdx.value == 1) {
-                                currentThemeModeIdx.value = 1
-                                sharedPrefs.edit().putInt("theme_mode", 1).apply()
-                                showSettingsDialog.value = false
+                            
+                            // Debug/Fallback option
+                            TextButton(onClick = { isDefaultSmsApp.value = true }) {
+                                Text("Debug: Show List Anyway")
                             }
-                            ThemeOption("Dark", currentThemeModeIdx.value == 2) {
-                                currentThemeModeIdx.value = 2
-                                sharedPrefs.edit().putInt("theme_mode", 2).apply()
-                                showSettingsDialog.value = false
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showSettingsDialog.value = false }) {
-                            Text("Close")
                         }
                     }
-                )
-            }
+                }
+            )
         }
     }
 }

@@ -1,17 +1,21 @@
 package com.example.smstextapp
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+// Removing Application import as it is now used only in Factory logic via casting
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+// Imports cleaned up
+import androidx.lifecycle.viewmodel.CreationExtras
 
-class ConversationViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = SmsRepository(application)
+class ConversationViewModel(
+    private val repository: SmsRepository
+) : ViewModel() {
     
     private val _conversations = MutableStateFlow<List<Conversation>>(emptyList())
     val conversations: StateFlow<List<Conversation>> = _conversations
@@ -113,5 +117,19 @@ class ConversationViewModel(application: Application) : AndroidViewModel(applica
     fun closeConversation() {
         _selectedConversationId.value = null
         _messages.value = emptyList()
+    }
+
+    companion object {
+        val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(
+                modelClass: Class<T>,
+                extras: CreationExtras
+            ): T {
+                val application = checkNotNull(extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY])
+                val container = (application as SmsApp).container
+                return ConversationViewModel(container.smsRepository) as T
+            }
+        }
     }
 }
