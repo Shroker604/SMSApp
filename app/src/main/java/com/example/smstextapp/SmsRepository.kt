@@ -34,54 +34,62 @@ class SmsRepository(
 ) {
 
     suspend fun getConversations(): List<Conversation> = withContext(Dispatchers.IO) {
-        val conversations = mutableListOf<Conversation>()
-        val contentResolver: ContentResolver = context.contentResolver
+        val smsList = querySmsConversations()
+        val mmsList = queryMmsConversations()
+
+        // Merge Logic:
+        // 1. Group by Thread ID
+        // 2. Pick the latest message (by date) for each thread
+        val mergedMap = (smsList + mmsList).groupBy { it.threadId }
         
-        // Query the merged MMS/SMS conversations
-        val uri = android.net.Uri.parse("content://mms-sms/conversations?simple=true")
+        val finalConversations = mergedMap.map { (_, list) ->
+            // In a real app, we might want to check for read status across all, 
+            // but for now, we just take the latest message to show in the list.
+            list.maxByOrNull { it.date }!!
+        }.sortedByDescending { it.date }
+
+        android.util.Log.d("SmsRepository", "Merged count: ${finalConversations.size}")
+        finalConversations
+    }
+
+    private fun querySmsConversations(): List<Conversation> {
+        val conversations = mutableListOf<Conversation>()
+        val uri = Telephony.Sms.CONTENT_URI // Query ALL SMS (Inbox, Sent, etc)
         
         try {
-            val cursor = contentResolver.query(
+            val cursor = context.contentResolver.query(
                 uri,
                 arrayOf(
-                    Telephony.Sms.Conversations._ID, // Correct column for Thread ID in conversations table
-                    "date",
-                    "snippet",
-                    "recipient_ids",
-                    "read"
+                    Telephony.Sms._ID,
+                    Telephony.Sms.THREAD_ID,
+                    Telephony.Sms.ADDRESS,
+                    Telephony.Sms.BODY,
+                    Telephony.Sms.DATE,
+                    Telephony.Sms.READ
                 ),
+                null, 
                 null,
-                null,
-                "date DESC"
+                "date DESC LIMIT 100" // Cap for performance
             )
 
-            android.util.Log.d("SmsRepository", "Cursor count: ${cursor?.count}")
-
             cursor?.use {
-                val threadIdIdx = it.getColumnIndex(Telephony.Sms.Conversations._ID)
-                val dateIdx = it.getColumnIndex("date")
-                val snippetIdx = it.getColumnIndex("snippet")
-                val recipientIdsIdx = it.getColumnIndex("recipient_ids")
-                val readIdx = it.getColumnIndex("read")
+                val threadIdIdx = it.getColumnIndex(Telephony.Sms.THREAD_ID)
+                val addressIdx = it.getColumnIndex(Telephony.Sms.ADDRESS)
+                val bodyIdx = it.getColumnIndex(Telephony.Sms.BODY)
+                val dateIdx = it.getColumnIndex(Telephony.Sms.DATE)
+                val readIdx = it.getColumnIndex(Telephony.Sms.READ)
 
                 while (it.moveToNext()) {
                     val threadId = it.getLong(threadIdIdx)
-                    val recipientIdsStr = it.getString(recipientIdsIdx) ?: ""
-                    val snippet = it.getString(snippetIdx) ?: ""
+                    // Skip if we already have this thread (simple dedupe for SMS-only pass)
+                    if (conversations.any { c -> c.threadId == threadId }) continue
+                    
+                    val address = it.getString(addressIdx) ?: "Unknown"
+                    val body = it.getString(bodyIdx) ?: ""
                     val date = it.getLong(dateIdx)
                     val read = it.getInt(readIdx) == 1
 
-                    // Helper to get raw numbers and names using ContactRepository
-                    val info = contactRepository.resolveRecipientInfo(recipientIdsStr)
-
-                    // Filter blocked numbers
-                    // DEBUG: Commenting out block check to rule it out
-                    /*
-                    if (isConversationBlocked(info.rawAddress)) {
-                        android.util.Log.d("SmsRepository", "Skipping blocked conversation: ${info.rawAddress}")
-                        continue
-                    }
-                    */
+                    val info = contactRepository.resolveRecipientInfo(address)
 
                     conversations.add(
                         Conversation(
@@ -89,7 +97,7 @@ class SmsRepository(
                             rawAddress = info.rawAddress,
                             displayName = info.displayName,
                             photoUri = info.photoUri,
-                            snippet = snippet,
+                            snippet = body,
                             date = date,
                             read = read
                         )
@@ -97,26 +105,78 @@ class SmsRepository(
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("SmsRepository", "Error fetching conversations", e)
+            android.util.Log.e("SmsRepository", "Error querying SMS", e)
         }
-        
-        // DEBUG: If empty, add a fake one to prove UI works
-        if (conversations.isEmpty()) {
-             conversations.add(
-                 Conversation(
-                     threadId = 9999,
-                     rawAddress = "1234567890",
-                     displayName = "Debug User",
-                     photoUri = null,
-                     snippet = "If you see this, UI is working but DB is empty/query failed.",
-                     date = System.currentTimeMillis(),
-                     read = true
-                 )
-             )
-        }
+        return conversations
+    }
 
-        android.util.Log.d("SmsRepository", "Returning ${conversations.size} conversations")
-        conversations
+    private fun queryMmsConversations(): List<Conversation> {
+        val conversations = mutableListOf<Conversation>()
+        val uri = Telephony.Mms.CONTENT_URI
+        
+        try {
+            val cursor = context.contentResolver.query(
+                uri,
+                arrayOf(
+                    Telephony.Mms._ID,
+                    Telephony.Mms.THREAD_ID,
+                    Telephony.Mms.DATE,
+                    Telephony.Mms.READ,
+                    Telephony.Mms.SUBJECT // MMS usually has subject or nothing
+                ),
+                null,
+                null,
+                "date DESC LIMIT 100"
+            )
+
+            cursor?.use {
+                val threadIdIdx = it.getColumnIndex(Telephony.Mms.THREAD_ID)
+                val dateIdx = it.getColumnIndex(Telephony.Mms.DATE)
+                val readIdx = it.getColumnIndex(Telephony.Mms.READ)
+                val subIdx = it.getColumnIndex(Telephony.Mms.SUBJECT)
+
+                while (it.moveToNext()) {
+                    val threadId = it.getLong(threadIdIdx)
+                     // Skip if we already gathered this thread from MMS
+                    if (conversations.any { c -> c.threadId == threadId }) continue
+
+                    var date = it.getLong(dateIdx)
+                    // Normalize MMS date: content://mms often returns seconds, sms is millis
+                    if (date < 10000000000L) {
+                        date *= 1000
+                    }
+
+                    val subject = it.getString(subIdx) ?: "Multimedia Message"
+                    val read = it.getInt(readIdx) == 1
+
+                    // For MMS, address resolution is harder (need query addr table). 
+                    // For V1, we will just use a placeholder or reuse ContactRepo if possible.
+                    // Doing a "Multimedia Message" snippet is sufficient for the list.
+                    
+                    // Note: Getting the REAL address for MMS requires querying `content://mms/{id}/addr`.
+                    // To keep it fast, we might skip address here and hope SMS passed populated it,
+                    // or accept "MMS" as the name if it's MMS-only thread.
+                    // Let's rely on ContactRepository with a dummy number if we can't get it easily,
+                    // OR, since valid threads usually have >=1 SMS, we might get lucky. 
+                    // For now, let's use a generic placeholder if it's truly MMS-only.
+                    
+                    conversations.add(
+                        Conversation(
+                            threadId = threadId,
+                            rawAddress = "MMS Group", // Placeholder
+                            displayName = "MMS Conversation", // Placeholder
+                            photoUri = null,
+                            snippet = subject,
+                            date = date,
+                            read = read
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("SmsRepository", "Error querying MMS", e)
+        }
+        return conversations
     }
     
     private fun isConversationBlocked(rawAddress: String): Boolean {

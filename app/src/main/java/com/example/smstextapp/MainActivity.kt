@@ -87,6 +87,20 @@ fun MainScreen() {
                 isDefaultSmsApp.value = isDefaultSmsApp(context)
             }
             
+            // Re-check on Resume (e.g. returning from Settings)
+            val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+            androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                        isDefaultSmsApp.value = isDefaultSmsApp(context)
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                }
+            }
+            
             // Layout
             Scaffold(
                 content = { padding ->
@@ -143,6 +157,7 @@ fun MainScreen() {
                             ) {
                                 Text("Set as Default SMS App")
                             }
+                            
                             
                             // Debug/Fallback option
                             TextButton(onClick = { isDefaultSmsApp.value = true }) {
