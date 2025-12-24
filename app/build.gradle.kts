@@ -62,6 +62,7 @@ dependencies {
     // but sticking to standard permissions handling is fine too. 
     // We'll add accompanist for easier permission handling in Compose if needed.
     implementation("com.google.accompanist:accompanist-permissions:0.32.0")
+    implementation("io.coil-kt:coil-compose:2.5.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

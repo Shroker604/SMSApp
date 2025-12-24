@@ -33,7 +33,8 @@ fun ConversationListScreen(
     val permissionsState = com.google.accompanist.permissions.rememberMultiplePermissionsState(
         permissions = listOf(
             Manifest.permission.READ_SMS,
-            Manifest.permission.READ_CONTACTS
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.POST_NOTIFICATIONS
         )
     )
     
@@ -97,23 +98,19 @@ fun ConversationItem(
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Avatar placeholder
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .background(Color.Gray, CircleShape)
+        // Avatar
+        ContactAvatar(
+            displayName = conversation.displayName,
+            photoUri = conversation.photoUri
         )
 
         Spacer(modifier = Modifier.width(16.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-                )
-                Text(
-                    text = DateUtils.getRelativeTimeSpanString(conversation.date).toString(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            Text(
+                text = conversation.displayName,
+                style = MaterialTheme.typography.titleMedium
+            )
             Text(
                 text = conversation.snippet,
                 style = MaterialTheme.typography.bodyMedium,
@@ -122,5 +119,13 @@ fun ConversationItem(
                 overflow = TextOverflow.Ellipsis
             )
         }
+        
+        Spacer(modifier = Modifier.width(8.dp))
+        
+        Text(
+            text = DateUtils.getRelativeTimeSpanString(conversation.date).toString(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
