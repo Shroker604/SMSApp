@@ -46,6 +46,12 @@ fun ConversationListScreen(
     )
     
     // Refresh conversations...
+    LaunchedEffect(Unit) {
+        if (permissionsState.allPermissionsGranted) {
+            viewModel.loadConversations()
+        }
+    }
+    // Also watch permission change if it wasn't granted initially
     LaunchedEffect(permissionsState.allPermissionsGranted) {
         if (permissionsState.allPermissionsGranted) {
             viewModel.loadConversations()

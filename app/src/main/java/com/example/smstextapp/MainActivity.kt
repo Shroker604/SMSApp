@@ -131,6 +131,9 @@ fun MainScreen() {
                              )
                              val selectedThreadId by viewModel.selectedConversationId.collectAsState()
                              
+                             // Hoist state to preserve scroll position - Must be outside the if/else to survive navigation
+                             val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+
                              if (selectedThreadId != null) {
                                  ConversationDetailScreen(viewModel)
                             } else {
@@ -155,9 +158,6 @@ fun MainScreen() {
                                       // Continue showing the app, don't block fully, 
                                       // but maybe show a "Sync Contacts" banner if you want.
                                   }
-
-                                  // Hoist state to preserve scroll position
-                                  val listState = androidx.compose.foundation.lazy.rememberLazyListState()
 
                                   ConversationListScreen(
                                       viewModel = viewModel,
