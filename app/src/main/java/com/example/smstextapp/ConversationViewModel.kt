@@ -168,6 +168,7 @@ class ConversationViewModel(
             // Continuously load or just load once? ideally observe.
             // For now, load once.
             refreshMessages()
+            repository.markAsRead(threadId)
         }
     }
     
