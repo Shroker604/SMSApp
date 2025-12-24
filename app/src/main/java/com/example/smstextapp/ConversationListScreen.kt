@@ -33,7 +33,8 @@ import com.google.accompanist.permissions.rememberMultiplePermissionsState
 @Composable
 fun ConversationListScreen(
     viewModel: ConversationViewModel = viewModel(),
-    showSettings: MutableState<Boolean>
+    showSettings: MutableState<Boolean>,
+    listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
 ) {
     // Request permissions...
     val permissionsState = com.google.accompanist.permissions.rememberMultiplePermissionsState(
@@ -88,6 +89,7 @@ fun ConversationListScreen(
                  }
              } else {
                  LazyColumn(
+                     state = listState,
                      modifier = Modifier.padding(padding)
                  ) {
                      items(conversations) { conversation ->

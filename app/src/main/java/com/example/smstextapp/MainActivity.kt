@@ -156,9 +156,13 @@ fun MainScreen() {
                                       // but maybe show a "Sync Contacts" banner if you want.
                                   }
 
+                                  // Hoist state to preserve scroll position
+                                  val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+
                                   ConversationListScreen(
                                       viewModel = viewModel,
-                                      showSettings = showSettings
+                                      showSettings = showSettings,
+                                      listState = listState
                                   )
                              }
                          }
