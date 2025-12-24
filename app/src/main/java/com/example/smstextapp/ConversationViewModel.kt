@@ -4,7 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class ConversationViewModel(application: Application) : AndroidViewModel(application) {
@@ -26,6 +29,26 @@ class ConversationViewModel(application: Application) : AndroidViewModel(applica
     // Hold the raw address for sending
     private val _selectedConversationRawAddress = MutableStateFlow<String>("")
 
+    // Search Query
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery
+
+    // Filtered conversations
+    val filteredConversations: StateFlow<List<Conversation>> = combine(
+        _conversations,
+        _searchQuery
+    ) { conversations, query ->
+        if (query.isBlank()) {
+            conversations
+        } else {
+            conversations.filter {
+                it.displayName.contains(query, ignoreCase = true) ||
+                it.snippet.contains(query, ignoreCase = true) ||
+                it.rawAddress.contains(query)
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     fun loadConversations() {
         viewModelScope.launch {
             try {
@@ -37,6 +60,23 @@ class ConversationViewModel(application: Application) : AndroidViewModel(applica
                 e.printStackTrace()
             }
         }
+    }
+    
+    fun onSearchQueryChanged(query: String) {
+        _searchQuery.value = query
+    }
+
+    fun blockCurrentConversation() {
+        val address = _selectedConversationRawAddress.value
+        if (address.isBlank()) return
+        
+        // Block all numbers associated with this thread (split by ;)
+        val numbers = address.split(";")
+        numbers.forEach { repository.blockNumber(it) }
+        
+        // Close and refresh to remove from list
+        closeConversation()
+        loadConversations()
     }
 
     fun openConversation(threadId: Long, rawAddress: String, displayName: String) {

@@ -20,6 +20,12 @@ class SmsReceiver : BroadcastReceiver() {
     }
 
     private fun showNotification(context: Context, sender: String, body: String) {
+        // Check if blocked
+        val blockRepository = BlockRepository(context)
+        if (blockRepository.isBlocked(sender)) {
+            return
+        }
+
         val channelId = "sms_channel"
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         

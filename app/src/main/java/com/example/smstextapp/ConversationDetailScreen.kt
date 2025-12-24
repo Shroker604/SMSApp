@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,6 +36,8 @@ fun ConversationDetailScreen(
         viewModel.closeConversation()
     }
 
+    var showMenu by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -42,6 +45,23 @@ fun ConversationDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = { viewModel.closeConversation() }) {
                         Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showMenu = !showMenu }) {
+                        Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Menu")
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Block") },
+                            onClick = { 
+                                viewModel.blockCurrentConversation()
+                                showMenu = false 
+                            }
+                        )
                     }
                 }
             )

@@ -28,6 +28,8 @@ data class SmsMessage(
 
 class SmsRepository(private val context: Context) {
 
+    private val blockRepository = BlockRepository(context)
+
     suspend fun getConversations(): List<Conversation> = withContext(Dispatchers.IO) {
         val conversations = mutableListOf<Conversation>()
         val contentResolver: ContentResolver = context.contentResolver
@@ -66,6 +68,14 @@ class SmsRepository(private val context: Context) {
                 // Helper to get raw numbers and names
                 val info = resolveRecipientInfo(recipientIdsStr)
 
+                // Filter blocked numbers
+                // NOTE: recipientIdsStr is "1 2", info.rawAddress is "123456;789012"
+                // We should check if ANY of the participants are blocked.
+                // For simplified logic, if the raw address string contains a blocked number, skip.
+                if (isConversationBlocked(info.rawAddress)) {
+                    continue
+                }
+
                 conversations.add(
                     Conversation(
                         threadId = threadId,
@@ -80,6 +90,12 @@ class SmsRepository(private val context: Context) {
             }
         }
         conversations
+    }
+    
+    private fun isConversationBlocked(rawAddress: String): Boolean {
+        // rawAddress could be "123456" or "123456;987654"
+        val numbers = rawAddress.split(";")
+        return numbers.any { blockRepository.isBlocked(it) }
     }
 
     data class RecipientInfo(val rawAddress: String, val displayName: String, val photoUri: String?)
@@ -205,5 +221,12 @@ class SmsRepository(private val context: Context) {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+    fun blockNumber(number: String) {
+        blockRepository.block(number)
+    }
+    
+    fun unblockNumber(number: String) {
+        blockRepository.unblock(number)
     }
 }
