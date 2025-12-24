@@ -22,23 +22,29 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
-import com.google.accompanist.permissions.rememberPermissionState
+import com.google.accompanist.permissions.rememberMultiplePermissionsState
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationListScreen(
     viewModel: ConversationViewModel = viewModel()
 ) {
-    val smsPermissionState = rememberPermissionState(Manifest.permission.READ_SMS)
+    // Request both READ_SMS and READ_CONTACTS
+    val permissionsState = com.google.accompanist.permissions.rememberMultiplePermissionsState(
+        permissions = listOf(
+            Manifest.permission.READ_SMS,
+            Manifest.permission.READ_CONTACTS
+        )
+    )
     
-    // Refresh conversations when permission is granted or on start
-    LaunchedEffect(smsPermissionState.status.isGranted) {
-        if (smsPermissionState.status.isGranted) {
+    // Refresh conversations when permissions are granted or on start
+    LaunchedEffect(permissionsState.allPermissionsGranted) {
+        if (permissionsState.allPermissionsGranted) {
             viewModel.loadConversations()
         }
     }
 
-    if (smsPermissionState.status.isGranted) {
+    if (permissionsState.allPermissionsGranted) {
         val conversations by viewModel.conversations.collectAsState()
         
         Scaffold(
@@ -57,7 +63,7 @@ fun ConversationListScreen(
                      modifier = Modifier.padding(padding)
                  ) {
                      items(conversations) { conversation ->
-                         ConversationItem(conversation)
+                         ConversationItem(conversation, viewModel)
                      }
                  }
              }
@@ -68,50 +74,39 @@ fun ConversationListScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("We need permission to read your SMS messages.")
+            Text("We need permission to read your SMS messages and Contacts.")
             Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = { smsPermissionState.launchPermissionRequest() }) {
-                Text("Grant Permission")
+            Button(onClick = { permissionsState.launchMultiplePermissionRequest() }) {
+                Text("Grant Permissions")
             }
         }
     }
 }
 
 @Composable
-fun ConversationItem(conversation: Conversation) {
+fun ConversationItem(
+    conversation: Conversation,
+    viewModel: ConversationViewModel = viewModel()
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { /* TODO: Open detail */ }
+            .clickable { 
+                viewModel.openConversation(conversation.threadId, conversation.rawAddress, conversation.displayName) 
+            }
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Avatar Placeholder
+        // Avatar placeholder
         Box(
             modifier = Modifier
                 .size(48.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = conversation.address.take(1).uppercase(),
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                fontWeight = FontWeight.Bold
-            )
-        }
+                .background(Color.Gray, CircleShape)
+        )
 
         Spacer(modifier = Modifier.width(16.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Row(
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = conversation.address,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (conversation.read) FontWeight.Normal else FontWeight.Bold
                 )
                 Text(
                     text = DateUtils.getRelativeTimeSpanString(conversation.date).toString(),
