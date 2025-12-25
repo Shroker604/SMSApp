@@ -187,19 +187,12 @@ class SmsRepository(
                         date *= 1000
                     }
 
-                    val subject = it.getString(subIdx) ?: "Multimedia Message"
+                    val subject = it.getString(subIdx)
                     val read = it.getInt(readIdx) == 1
-
-                    // For MMS, address resolution is harder (need query addr table). 
-                    // For V1, we will just use a placeholder or reuse ContactRepo if possible.
-                    // Doing a "Multimedia Message" snippet is sufficient for the list.
                     
-                    // Note: Getting the REAL address for MMS requires querying `content://mms/{id}/addr`.
-                    // To keep it fast, we might skip address here and hope SMS passed populated it,
-                    // or accept "MMS" as the name if it's MMS-only thread.
-                    // Let's rely on ContactRepository with a dummy number if we can't get it easily,
-                    // OR, since valid threads usually have >=1 SMS, we might get lucky. 
-                    // For now, let's use a generic placeholder if it's truly MMS-only.
+                    val mmsId = it.getLong(it.getColumnIndex(Telephony.Mms._ID))
+                    // If subject is missing, try to get text body.
+                    val snippet = if (!subject.isNullOrBlank()) subject else getMmsText(mmsId)
                     
                     conversations.add(
                         Conversation(
@@ -207,7 +200,7 @@ class SmsRepository(
                             rawAddress = "MMS Group", // Placeholder
                             displayName = "MMS Conversation", // Placeholder
                             photoUri = null,
-                            snippet = subject,
+                            snippet = snippet,
                             date = date,
                             read = read
                         )
@@ -236,44 +229,132 @@ class SmsRepository(
     }
     
     suspend fun getMessages(threadId: Long): List<SmsMessage> = withContext(Dispatchers.IO) {
+        val smsList = querySmsMessages(threadId)
+        val mmsList = queryMmsMessages(threadId)
+        
+        (smsList + mmsList).sortedBy { it.date }
+    }
+
+    private fun querySmsMessages(threadId: Long): List<SmsMessage> {
         val messages = mutableListOf<SmsMessage>()
         val resolver = context.contentResolver
         val uri = Telephony.Sms.CONTENT_URI
         
-        val cursor = resolver.query(
-            uri,
-            arrayOf(
-                Telephony.Sms._ID,
-                Telephony.Sms.ADDRESS,
-                Telephony.Sms.BODY,
-                Telephony.Sms.DATE,
-                Telephony.Sms.TYPE
-            ),
-            "${Telephony.Sms.THREAD_ID} = ?",
-            arrayOf(threadId.toString()),
-            "${Telephony.Sms.DATE} ASC" // Oldest first for chat view
-        )
+        try {
+            val cursor = resolver.query(
+                uri,
+                arrayOf(
+                    Telephony.Sms._ID,
+                    Telephony.Sms.ADDRESS,
+                    Telephony.Sms.BODY,
+                    Telephony.Sms.DATE,
+                    Telephony.Sms.TYPE
+                ),
+                "${Telephony.Sms.THREAD_ID} = ?",
+                arrayOf(threadId.toString()),
+                null // Sort effectively handled by list merge later
+            )
 
-        cursor?.use {
-            val idIdx = it.getColumnIndex(Telephony.Sms._ID)
-            val addressIdx = it.getColumnIndex(Telephony.Sms.ADDRESS)
-            val bodyIdx = it.getColumnIndex(Telephony.Sms.BODY)
-            val dateIdx = it.getColumnIndex(Telephony.Sms.DATE)
-            val typeIdx = it.getColumnIndex(Telephony.Sms.TYPE)
+            cursor?.use {
+                val idIdx = it.getColumnIndex(Telephony.Sms._ID)
+                val addressIdx = it.getColumnIndex(Telephony.Sms.ADDRESS)
+                val bodyIdx = it.getColumnIndex(Telephony.Sms.BODY)
+                val dateIdx = it.getColumnIndex(Telephony.Sms.DATE)
+                val typeIdx = it.getColumnIndex(Telephony.Sms.TYPE)
 
-            while (it.moveToNext()) {
-                messages.add(
-                    SmsMessage(
-                        id = it.getLong(idIdx),
-                        address = it.getString(addressIdx) ?: "",
-                        body = it.getString(bodyIdx) ?: "",
-                        date = it.getLong(dateIdx),
-                        type = it.getInt(typeIdx)
+                while (it.moveToNext()) {
+                    messages.add(
+                        SmsMessage(
+                            id = it.getLong(idIdx),
+                            address = it.getString(addressIdx) ?: "",
+                            body = it.getString(bodyIdx) ?: "",
+                            date = it.getLong(dateIdx),
+                            type = it.getInt(typeIdx)
+                        )
                     )
-                )
+                }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        messages
+        return messages
+    }
+
+    private fun queryMmsMessages(threadId: Long): List<SmsMessage> {
+        val messages = mutableListOf<SmsMessage>()
+        val uri = Telephony.Mms.CONTENT_URI
+        
+        try {
+            val cursor = context.contentResolver.query(
+                uri,
+                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX),
+                "${Telephony.Mms.THREAD_ID} = ?",
+                arrayOf(threadId.toString()),
+                null
+            )
+
+            cursor?.use {
+                val idIdx = it.getColumnIndex(Telephony.Mms._ID)
+                val dateIdx = it.getColumnIndex(Telephony.Mms.DATE)
+                val boxIdx = it.getColumnIndex(Telephony.Mms.MESSAGE_BOX)
+
+                while (it.moveToNext()) {
+                    val mmsId = it.getLong(idIdx)
+                    var date = it.getLong(dateIdx)
+                    if (date < 10000000000L) date *= 1000
+                    
+                    val msgBox = it.getInt(boxIdx)
+                    // Map MMS box to SMS type: 1=Inbox, 2=Sent
+                    val type = if (msgBox == Telephony.Mms.MESSAGE_BOX_SENT) Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX
+                    
+                    val body = getMmsText(mmsId)
+                    
+                    messages.add(
+                        SmsMessage(
+                            id = mmsId, // Note: IDs might collide with SMS if not careful in UI keys
+                            address = "", // Parsing MMS address is expensive, skip for now or use generic
+                            body = body,
+                            date = date,
+                            type = type
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return messages
+    }
+
+    private fun getMmsText(mmsId: Long): String {
+        var body = ""
+        val partUri = android.net.Uri.parse("content://mms/part")
+        val selection = "mid=$mmsId AND ct='text/plain'"
+        
+        try {
+            val cursor = context.contentResolver.query(partUri, null, selection, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    do {
+                        val textIdx = it.getColumnIndex("text")
+                        if (textIdx >= 0) {
+                            val partText = it.getString(textIdx)
+                            if (!partText.isNullOrBlank()) {
+                                body = partText
+                                break // Found the text body
+                            }
+                        }
+                    } while (it.moveToNext())
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        
+        if (body.isEmpty()) {
+            body = "Multimedia Message" // Fallback if no text part found (e.g. image only)
+        }
+        return body
     }
 
     fun sendMessage(destinationAddress: String, body: String) {
