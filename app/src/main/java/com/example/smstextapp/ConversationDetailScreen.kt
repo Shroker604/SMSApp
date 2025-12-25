@@ -30,8 +30,10 @@ fun ConversationDetailScreen(
 ) {
     val messages by viewModel.messages.collectAsState()
     val title by viewModel.selectedConversationDisplayName.collectAsState()
-    val listState = rememberLazyListState()
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     var messageText by remember { mutableStateOf("") }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState() // Use explicit package or import
+    val context = androidx.compose.ui.platform.LocalContext.current // Defined at top level for use in callbacks
 
     // Handle back button to close conversation
     BackHandler {
@@ -57,8 +59,6 @@ fun ConversationDetailScreen(
                     }
                     
                     // Scheduler State - Refactored to launch directly from onClick
-                    // to avoid SideEffect issues in Composition.
-                    val context = androidx.compose.ui.platform.LocalContext.current
                     val calendar = java.util.Calendar.getInstance()
 
                     // We define a function helper or just inline it in onClick.
@@ -183,10 +183,14 @@ fun ConversationDetailScreen(
                     FloatingActionButton(
                         onClick = { 
                             if (selectedImageUri != null) {
+                                // Feedback
+                                android.widget.Toast.makeText(context, "Sending MMS...", android.widget.Toast.LENGTH_SHORT).show()
                                 viewModel.sendMms(messageText, selectedImageUri!!)
                                 messageText = ""
                                 selectedImageUri = null
                             } else if (messageText.isNotBlank()) {
+                                // Feedback
+                                android.widget.Toast.makeText(context, "Sending...", android.widget.Toast.LENGTH_SHORT).show()
                                 viewModel.sendMessage(messageText)
                                 messageText = ""
                             }

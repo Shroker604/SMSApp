@@ -362,7 +362,20 @@ class SmsRepository(
         
         try {
             val smsManager = context.getSystemService(android.telephony.SmsManager::class.java)
+            // Ideally we use PendingIntent to track success/failure (SENT_ACTION)
+            // For now, fire and forget, but WE MUST SAVE IT.
             smsManager.sendTextMessage(destinationAddress, null, body, null, null)
+            
+            // Save to "Sent" box
+            val values = android.content.ContentValues().apply {
+                put(Telephony.Sms.ADDRESS, destinationAddress)
+                put(Telephony.Sms.BODY, body)
+                put(Telephony.Sms.DATE, System.currentTimeMillis())
+                put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_SENT)
+                put(Telephony.Sms.READ, 1)
+            }
+            context.contentResolver.insert(Telephony.Sms.Sent.CONTENT_URI, values)
+            
         } catch (e: Exception) {
             e.printStackTrace()
         }
