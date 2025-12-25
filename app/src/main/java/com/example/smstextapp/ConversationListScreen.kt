@@ -3,6 +3,7 @@ package com.example.smstextapp
 import android.Manifest
 import android.text.format.DateUtils
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -61,6 +62,24 @@ fun ConversationListScreen(
     if (permissionsState.allPermissionsGranted) {
         val conversations by viewModel.filteredConversations.collectAsState()
         val searchQuery by viewModel.searchQuery.collectAsState()
+        
+        var showContactPicker by remember { mutableStateOf(false) }
+    
+        if (showContactPicker) {
+             var contactList by remember { mutableStateOf<List<com.example.smstextapp.data.ContactRepository.Contact>>(emptyList()) }
+             LaunchedEffect(Unit) {
+                 contactList = viewModel.getAllContacts()
+             }
+             
+             com.example.smstextapp.ui.ContactPicker(
+                contacts = contactList,
+                onDismiss = { showContactPicker = false },
+                onConfirm = { numbers -> 
+                    showContactPicker = false
+                    viewModel.startNewConversation(numbers)
+                }
+             )
+        }
 
         Scaffold(
             topBar = {
@@ -86,10 +105,25 @@ fun ConversationListScreen(
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)
                     )
                 }
+            },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = { showContactPicker = true },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = "New Message")
+                }
             }
         ) { padding ->
              // Content
-             if (conversations.isEmpty()) {
+             val isLoading by viewModel.isLoading.collectAsState()
+
+             if (isLoading) {
+                 Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                     CircularProgressIndicator()
+                 }
+             } else if (conversations.isEmpty()) {
                  Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                      Text(if (searchQuery.isNotEmpty()) "No matches found" else "No conversations")
                  }

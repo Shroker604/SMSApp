@@ -53,8 +53,13 @@ class ConversationViewModel(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Loading State
+    private val _isLoading = MutableStateFlow(true)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
     fun loadConversations() {
         viewModelScope.launch {
+            _isLoading.value = true
             try {
                 _conversations.value = repository.getConversations()
             } catch (e: SecurityException) {
@@ -62,6 +67,8 @@ class ConversationViewModel(
                 _conversations.value = emptyList()
             } catch (e: Exception) {
                 e.printStackTrace()
+            } finally {
+                _isLoading.value = false
             }
         }
     }
