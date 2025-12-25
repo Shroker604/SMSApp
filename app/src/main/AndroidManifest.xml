@@ -63,6 +63,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- Receiver for tracking Sent Status -->
+        <receiver
+            android:name=".SmsSentReceiver"
+            android:exported="true">
+             <intent-filter>
+                <action android:name="com.example.smstextapp.SMS_SENT" />
+            </intent-filter>
+        </receiver>
+
         <!-- Service that handles sending MMS messages -->
         <service
             android:name=".HeadlessSmsSendService"

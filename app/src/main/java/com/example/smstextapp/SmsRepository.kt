@@ -26,7 +26,7 @@ data class SmsMessage(
     val date: Long,
     val type: Int // 1 = Inbox, 2 = Sent
 ) {
-    val isSent: Boolean get() = type == Telephony.Sms.MESSAGE_TYPE_SENT
+    val isSent: Boolean get() = type != Telephony.Sms.MESSAGE_TYPE_INBOX
 }
 
 
@@ -361,20 +361,31 @@ class SmsRepository(
         if (body.isBlank() || destinationAddress.isBlank()) return
         
         try {
-            val smsManager = context.getSystemService(android.telephony.SmsManager::class.java)
-            // Ideally we use PendingIntent to track success/failure (SENT_ACTION)
-            // For now, fire and forget, but WE MUST SAVE IT.
-            smsManager.sendTextMessage(destinationAddress, null, body, null, null)
-            
-            // Save to "Sent" box
+            // 1. Insert into DB as OUTBOX (Sending...)
             val values = android.content.ContentValues().apply {
                 put(Telephony.Sms.ADDRESS, destinationAddress)
                 put(Telephony.Sms.BODY, body)
                 put(Telephony.Sms.DATE, System.currentTimeMillis())
-                put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_SENT)
+                put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_OUTBOX) // 4 = Outbox
                 put(Telephony.Sms.READ, 1)
             }
-            context.contentResolver.insert(Telephony.Sms.Sent.CONTENT_URI, values)
+            val uri = context.contentResolver.insert(Telephony.Sms.Sent.CONTENT_URI, values) ?: return
+
+            // 2. Create PendingIntent for Status Update
+            val sentIntent = android.content.Intent(context, SmsSentReceiver::class.java).apply {
+                action = SmsSentReceiver.SMS_SENT_ACTION
+                putExtra("message_uri", uri.toString())
+            }
+            val sentPI = android.app.PendingIntent.getBroadcast(
+                context,
+                uri.lastPathSegment?.toInt() ?: 0,
+                sentIntent,
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            )
+
+            // 3. Send
+            val smsManager = context.getSystemService(android.telephony.SmsManager::class.java)
+            smsManager.sendTextMessage(destinationAddress, null, body, sentPI, null)
             
         } catch (e: Exception) {
             e.printStackTrace()

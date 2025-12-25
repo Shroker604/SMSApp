@@ -261,5 +261,24 @@ fun MessageBubble(message: SmsMessage) {
                 fontSize = 16.sp
             )
         }
+        
+        if (isSent) {
+            val statusText = when (message.type) {
+                android.provider.Telephony.Sms.MESSAGE_TYPE_OUTBOX -> "Sending..."
+                android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED -> "Failed"
+                android.provider.Telephony.Sms.MESSAGE_TYPE_QUEUED -> "Queued"
+                android.provider.Telephony.Sms.MESSAGE_TYPE_SENT -> "Sent"
+                else -> ""
+            }
+            
+            if (statusText.isNotEmpty()) {
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp, start = 4.dp, end = 4.dp)
+                )
+            }
+        }
     }
 }
