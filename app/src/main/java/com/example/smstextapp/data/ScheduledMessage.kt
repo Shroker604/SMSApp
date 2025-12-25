@@ -3,13 +3,19 @@ package com.example.smstextapp.data
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+enum class ScheduledMessageStatus {
+    PENDING,
+    SENT,
+    FAILED,
+    CANCELLED
+}
+
 @Entity(tableName = "scheduled_messages")
 data class ScheduledMessage(
-    @PrimaryKey(autoGenerate = true)
-    val id: Long = 0,
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val threadId: Long,
-    val destinationAddress: String, // Need address in case thread is deleted? Or to avoid lookup complexity.
-    val messageBody: String,
+    val address: String, // Matches usage in Repository
+    val body: String,    // Matches usage in Repository
     val scheduledTimeMillis: Long,
-    val status: String = "PENDING" // PENDING, SENT, FAILED
+    val status: ScheduledMessageStatus = ScheduledMessageStatus.PENDING
 )

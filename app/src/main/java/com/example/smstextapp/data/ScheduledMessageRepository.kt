@@ -1,49 +1,45 @@
 package com.example.smstextapp.data
 
 import android.content.Context
-import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import kotlinx.coroutines.flow.Flow
 import java.util.concurrent.TimeUnit
 
 class ScheduledMessageRepository(
     private val context: Context,
-    private val scheduledMessageDao: ScheduledMessageDao
+    private val dao: ScheduledMessageDao
 ) {
-    suspend fun scheduleMessage(
-        threadId: Long,
-        destinationAddress: String,
-        messageBody: String,
-        scheduledTimeMillis: Long
-    ) {
+    fun getScheduledMessages(threadId: Long): Flow<List<ScheduledMessage>> {
+        return dao.getScheduledMessagesForThread(threadId)
+    }
+
+    suspend fun scheduleMessage(threadId: Long, address: String, body: String, timeMillis: Long) {
         val message = ScheduledMessage(
             threadId = threadId,
-            destinationAddress = destinationAddress,
-            messageBody = messageBody,
-            scheduledTimeMillis = scheduledTimeMillis
+            address = address,
+            body = body,
+            scheduledTimeMillis = timeMillis,
+            status = ScheduledMessageStatus.PENDING
         )
-        val id = scheduledMessageDao.insert(message)
+        val id = dao.insert(message)
         
-        val delay = scheduledTimeMillis - System.currentTimeMillis()
+        // Schedule Worker
+        val delay = timeMillis - System.currentTimeMillis()
         if (delay > 0) {
-            val workRequest = OneTimeWorkRequestBuilder<com.example.smstextapp.workers.MessageSchedulerWorker>()
+            val workRequest = OneTimeWorkRequest.Builder(com.example.smstextapp.workers.SendScheduledMessageWorker::class.java)
                 .setInitialDelay(delay, TimeUnit.MILLISECONDS)
                 .setInputData(workDataOf("messageId" to id))
+                .addTag("scheduled_sms_$id")
                 .build()
-
+            
             WorkManager.getInstance(context).enqueue(workRequest)
         }
     }
-
-    suspend fun getAllPendingMessages(): List<ScheduledMessage> {
-        return scheduledMessageDao.getAllPendingMessages()
-    }
-
-    suspend fun getMessageById(id: Long): ScheduledMessage? {
-        return scheduledMessageDao.getMessageById(id)
-    }
-
-    suspend fun updateStatus(id: Long, status: String) {
-        scheduledMessageDao.updateStatus(id, status)
+    
+    suspend fun cancelMessage(id: Long) {
+        dao.deleteById(id)
+        WorkManager.getInstance(context).cancelAllWorkByTag("scheduled_sms_$id")
     }
 }

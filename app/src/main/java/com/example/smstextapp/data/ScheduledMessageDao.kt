@@ -3,25 +3,23 @@ package com.example.smstextapp.data
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
-import androidx.room.Delete
+import androidx.room.Update
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ScheduledMessageDao {
     @Insert
-    suspend fun insert(scheduledMessage: ScheduledMessage): Long
+    suspend fun insert(message: ScheduledMessage): Long
 
-    @Query("SELECT * FROM scheduled_messages WHERE status = 'PENDING' ORDER BY scheduledTimeMillis ASC")
-    suspend fun getAllPendingMessages(): List<ScheduledMessage>
+    @Update
+    suspend fun update(message: ScheduledMessage)
+
+    @Query("SELECT * FROM scheduled_messages WHERE threadId = :threadId ORDER BY scheduledTimeMillis ASC")
+    fun getScheduledMessagesForThread(threadId: Long): Flow<List<ScheduledMessage>>
     
     @Query("SELECT * FROM scheduled_messages WHERE id = :id")
-    suspend fun getMessageById(id: Long): ScheduledMessage?
+    suspend fun getById(id: Long): ScheduledMessage?
 
-    @Query("UPDATE scheduled_messages SET status = :status WHERE id = :id")
-    suspend fun updateStatus(id: Long, status: String)
-
-    @Delete
-    suspend fun delete(scheduledMessage: ScheduledMessage)
-    
     @Query("DELETE FROM scheduled_messages WHERE id = :id")
     suspend fun deleteById(id: Long)
 }

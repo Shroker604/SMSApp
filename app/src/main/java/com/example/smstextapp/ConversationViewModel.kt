@@ -213,10 +213,6 @@ class ConversationViewModel(
         val address = _selectedConversationRawAddress.value
         if (address.isBlank()) return
         
-        // We need ScheduledMessageRepository here.
-        // But ViewModel only has SmsRepository. 
-        // We should add ScheduledMessageRepository to ViewModel constructor or expose it via SmsRepository.
-        // Exposing via SmsRepository is cleaner for VM api.
         viewModelScope.launch {
             val threadId = repository.getThreadIdFor(address)
             repository.scheduleMessage(threadId, address, body, timeMillis)
