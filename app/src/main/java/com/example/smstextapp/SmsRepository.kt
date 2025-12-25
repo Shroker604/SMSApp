@@ -34,10 +34,29 @@ data class SmsMessage(
 class SmsRepository(
     private val context: Context,
     private val blockRepository: BlockRepository,
-    private val contactRepository: ContactRepository,
+    val contactRepository: ContactRepository, // Made public for ViewModel use
     private val metadataRepository: MetadataRepository,
     private val scheduledMessageRepository: com.example.smstextapp.data.ScheduledMessageRepository
 ) {
+    // ... existing ...
+
+    suspend fun getThreadIdFor(address: String): Long = withContext(Dispatchers.IO) {
+        try {
+            return@withContext android.provider.Telephony.Threads.getOrCreateThreadId(context, address)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext 0L
+        }
+    }
+
+    suspend fun getThreadIdFor(addresses: Set<String>): Long = withContext(Dispatchers.IO) {
+        try {
+            return@withContext android.provider.Telephony.Threads.getOrCreateThreadId(context, addresses)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext 0L
+        }
+    }
 
     suspend fun scheduleMessage(threadId: Long, address: String, body: String, timeMillis: Long) {
         scheduledMessageRepository.scheduleMessage(threadId, address, body, timeMillis)
@@ -219,14 +238,7 @@ class SmsRepository(
         return numbers.any { blockRepository.isBlocked(it) }
     }
 
-    suspend fun getThreadIdFor(address: String): Long = withContext(Dispatchers.IO) {
-        try {
-            return@withContext android.provider.Telephony.Threads.getOrCreateThreadId(context, address)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext 0L
-        }
-    }
+
     
     suspend fun getMessages(threadId: Long): List<SmsMessage> = withContext(Dispatchers.IO) {
         val smsList = querySmsMessages(threadId)

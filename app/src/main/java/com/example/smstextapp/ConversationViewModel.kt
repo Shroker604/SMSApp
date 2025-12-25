@@ -216,6 +216,59 @@ class ConversationViewModel(
             // Ideally notify user
         }
     }
+    
+    suspend fun getAllContacts(): List<com.example.smstextapp.data.ContactRepository.Contact> {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            repository.contactRepository.getAllContacts()
+        }
+    }
+
+    // Start a new conversation from Contact Picker
+    fun startNewConversation(selectedNumbers: List<String>) {
+        if (selectedNumbers.isEmpty()) return
+        
+        viewModelScope.launch {
+            val address = selectedNumbers.joinToString(";") // Simple separator for multi-target, though getThreadIdFor handles set
+            // For now, let's treat it as a raw address string that getThreadIdFor understands, 
+            // or we might need to be smarter about "MMS Group" creation.
+            // Android SDK Telephony.Threads.getOrCreateThreadId takes a Set<String> for multiple recipients.
+            
+            // However, our repository wrapper currently takes a single string.
+            // Let's rely on repository to deduce provided "123;456" or we update repository.
+            // SmsRepository.getThreadIdFor(address) -> accepts string.
+            // If we pass "123;456", Telephony.Threads might not parse it if it expects a Set.
+            // Let's try to update SmsRepository or handle it there.
+            
+            // ACTUALLY: The best way is to let repository handle Set.
+            // But to avoid change ripple, let's just use the string for single, and for multiple...
+            // Standard Android MMS address format is usually just passed to the intent, but for reading history we need threadId.
+            // Telephony.Threads.getOrCreateThreadId(context, Set<String>) exists.
+            
+            // I will update the Repository to support Set<String> internally or just blindly try string.
+            // Since `getThreadIdFor` in Repo calls `Telephony.Threads.getOrCreateThreadId(context, address)`, 
+            // verifying documentation: `getOrCreateThreadId(Context, String)` takes a recipient.
+            // `getOrCreateThreadId(Context, Set<String>)` takes multiple.
+            
+            // So I should treat it carefully.
+            val threadId = if (selectedNumbers.size == 1) {
+                repository.getThreadIdFor(selectedNumbers.first())
+            } else {
+                repository.getThreadIdFor(selectedNumbers.toSet())
+            }
+            
+            // Once we have threadId, we open it.
+            // We also need display name.
+            val displayName = if (selectedNumbers.size == 1) {
+                 // Fetch name
+                 val info = repository.contactRepository.resolveRecipientInfo(selectedNumbers.first())
+                 info.displayName
+            } else {
+                "Group Chat" // Logic to build "Alice, Bob..."
+            }
+            
+            openConversation(threadId, address, displayName)
+        }
+    }
 
     fun closeConversation() {
         _selectedConversationId.value = null

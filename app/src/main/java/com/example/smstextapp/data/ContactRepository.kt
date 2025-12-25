@@ -95,4 +95,45 @@ class ContactRepository(private val context: Context) {
         }
         return Pair(name, photoUri)
     }
+
+    data class Contact(val id: Long, val displayName: String, val phoneNumber: String, val photoUri: String?)
+
+    fun getAllContacts(): List<Contact> {
+        val contacts = mutableListOf<Contact>()
+        val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+            ContactsContract.CommonDataKinds.Phone.NUMBER,
+            ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI
+        )
+        val selection = "${ContactsContract.CommonDataKinds.Phone.HAS_PHONE_NUMBER} > 0"
+        val sortOrder = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
+
+        try {
+            val cursor = context.contentResolver.query(uri, projection, selection, null, sortOrder)
+            cursor?.use {
+                val idIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+                val nameIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val numIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                val photoIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
+
+                while (it.moveToNext()) {
+                    val id = it.getLong(idIdx)
+                    val name = it.getString(nameIdx) ?: "Unknown"
+                    val number = it.getString(numIdx) ?: ""
+                    val photo = it.getString(photoIdx)
+                    
+                    if (number.isNotBlank()) {
+                         // Simple dedupe by number could be here, but let's just return all for now or unique by number?
+                         // Contacts often have duplicates.
+                         contacts.add(Contact(id, name, number, photo))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return contacts.distinctBy { it.phoneNumber.replace(" ", "").replace("-", "") } // Basic dedupe
+    }
 }
