@@ -10,12 +10,36 @@ class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Telephony.Sms.Intents.SMS_DELIVER_ACTION) {
             val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-            messages.forEach { msg ->
-                val sender = msg.displayOriginatingAddress
-                val body = msg.messageBody
+            
+            // Group by sender to handle multipart messages correctly
+            val messagesBySender = messages.groupBy { it.displayOriginatingAddress }
+            
+            messagesBySender.forEach { (sender, parts) ->
+                // Concatenate parts to form the full message body
+                val body = parts.joinToString(separator = "") { it.messageBody }
+                val timestamp = parts[0].timestampMillis
                 
+                // 1. Save to System Database (Required for Default App)
+                saveSmsToInbox(context, sender, body, timestamp)
+                
+                // 2. Show Notification
                 showNotification(context, sender, body)
             }
+        }
+    }
+
+    private fun saveSmsToInbox(context: Context, address: String, body: String, date: Long) {
+        try {
+            val values = android.content.ContentValues().apply {
+                put(Telephony.Sms.ADDRESS, address)
+                put(Telephony.Sms.BODY, body)
+                put(Telephony.Sms.DATE, date)
+                put(Telephony.Sms.READ, 0) // Unread
+                put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_INBOX)
+            }
+            context.contentResolver.insert(Telephony.Sms.Inbox.CONTENT_URI, values)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
