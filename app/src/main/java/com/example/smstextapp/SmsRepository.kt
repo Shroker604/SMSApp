@@ -281,12 +281,23 @@ class SmsRepository(
                     // If subject is missing, try to get text body.
                     val snippet = if (!subject.isNullOrBlank()) subject else getMmsContent(mmsId).first
                     
+                    // Resolve Group Names
+                    val recipients = getMmsRecipients(mmsId)
+                    val displayName = if (recipients.isNotEmpty()) {
+                        recipients.joinToString(", ") { addr ->
+                             contactRepository.resolveRecipientInfo(addr).displayName
+                        }
+                    } else {
+                        "MMS Conversation"
+                    }
+                    val rawAddress = if (recipients.isNotEmpty()) recipients.joinToString(";") else "MMS Group"
+
                     conversations.add(
                         Conversation(
                             threadId = threadId,
-                            rawAddress = "MMS Group", // Placeholder
-                            displayName = "MMS Conversation", // Placeholder
-                            photoUri = null,
+                            rawAddress = rawAddress, 
+                            displayName = displayName, 
+                            photoUri = null, // Could fetch first contact's photo
                             snippet = snippet,
                             date = date,
                             read = read
@@ -298,6 +309,34 @@ class SmsRepository(
             android.util.Log.e("SmsRepository", "Error querying MMS", e)
         }
         return conversations
+    }
+
+    private fun getMmsRecipients(mmsId: Long): List<String> {
+        val recipients = mutableListOf<String>()
+        val uri = android.net.Uri.parse("content://mms/$mmsId/addr")
+        try {
+            val cursor = context.contentResolver.query(
+                uri,
+                arrayOf("address", "type"),
+                null,
+                null,
+                null
+            )
+            cursor?.use {
+                while (it.moveToNext()) {
+                    val address = it.getString(it.getColumnIndex("address"))
+                    // type: 151 (TO), 137 (FROM), 130 (CC), 129 (BCC)
+                    // We generally want everyone involved.
+                    // Filter out "insert-address-token" which sometimes appears.
+                    if (!address.isNullOrBlank() && !address.contains("insert-address-token")) {
+                        recipients.add(address)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return recipients
     }
     
     private fun isConversationBlocked(rawAddress: String): Boolean {
