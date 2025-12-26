@@ -80,41 +80,52 @@ class SmsPagingSource(
             }
 
             cursor.use {
-                 val typeColumn = it.getColumnIndex("transport_type") // Hardcoded constant
-                 val idColumn = it.getColumnIndex("_id")
-                 val bodyColumn = it.getColumnIndex("body")
-                 val dateColumn = it.getColumnIndex("normalized_date") // or "date"
-                 val smsTypeColumn = it.getColumnIndex("type")
-                 val mmsSubColumn = it.getColumnIndex("sub")
-                 val mmsTypeColumn = it.getColumnIndex("msg_box") 
+                 val typeColIdx = it.getColumnIndex("transport_type")
+                 val idColIdx = it.getColumnIndex("_id")
+                 val bodyColIdx = it.getColumnIndex("body")
+                 val dateColIdx = it.getColumnIndex("normalized_date")
+                 val smsTypeColIdx = it.getColumnIndex("type")
+                 val mmsBoxColIdx = it.getColumnIndex("msg_box") 
                  
-                 // If normalized_date missing, try date
-                 val validDateCol = if (dateColumn >= 0) dateColumn else it.getColumnIndex("date")
+                 // Fallback for date
+                 val dateFallbackIdx = it.getColumnIndex("date")
 
                 while (it.moveToNext()) {
-                    val transportType = it.getString(typeColumn)
-                    val id = it.getLong(idColumn)
-                    var date = it.getLong(validDateCol)
+                    val id = if (idColIdx >= 0) it.getLong(idColIdx) else 0L
+                    
+                    // Determine transport type safely
+                    val transportType = if (typeColIdx >= 0) it.getString(typeColIdx) else "sms"
+                    val isMms = transportType == "mms"
+                    
+                    // Date
+                    var date = 0L
+                    if (dateColIdx >= 0) {
+                        date = it.getLong(dateColIdx)
+                    } else if (dateFallbackIdx >= 0) {
+                        date = it.getLong(dateFallbackIdx)
+                    }
                     
                     if (date < 10000000000L) date *= 1000 
                     
-                    val isMms = transportType == "mms"
                     var body = ""
                     var imageUri: String? = null
                     var msgType = 0
                     
                     if (isMms) {
-                        val box = it.getInt(it.getColumnIndex("msg_box")) 
+                        val box = if (mmsBoxColIdx >= 0) it.getInt(mmsBoxColIdx) else 0
                         msgType = if (box == Telephony.Mms.MESSAGE_BOX_SENT) Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX
                         
+                         // For MMS, body is usually loaded from 'part' table.
+                         // But for the list, we might just show "MMS" or try to load content.
+                         // Loading content here (DB query) is okay in IO context.
                          val content = smsRepository.getMmsContent(id)
                          body = content.first
                          imageUri = content.second
                          
                     } else {
                         // SMS
-                        body = it.getString(bodyColumn) ?: ""
-                        msgType = it.getInt(smsTypeColumn)
+                        body = if (bodyColIdx >= 0) it.getString(bodyColIdx) ?: "" else ""
+                        msgType = if (smsTypeColIdx >= 0) it.getInt(smsTypeColIdx) else 1 // Default to Inbox(1)
                     }
                     
                     messages.add(
