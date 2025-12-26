@@ -31,4 +31,9 @@ object DateTimeUtils {
     fun formatMessageTime(timestamp: Long): String {
         return timeOnlyFormat.format(Date(timestamp))
     }
+
+    fun isSameDay(t1: Long, t2: Long): Boolean {
+        val sdf = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+        return sdf.format(Date(t1)) == sdf.format(Date(t2))
+    }
 }

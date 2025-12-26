@@ -143,7 +143,6 @@ class SmsPagingSource(
             }
         } catch (e: Exception) {
             e.printStackTrace()
-             android.util.Log.e("SmsPagingSource", "Query failed", e)
              return@withContext LoadResult.Error(e)
         }
 

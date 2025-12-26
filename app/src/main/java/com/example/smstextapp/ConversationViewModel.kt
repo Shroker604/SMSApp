@@ -14,10 +14,17 @@ import kotlinx.coroutines.launch
 import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
+import androidx.paging.map
+import androidx.paging.insertSeparators
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import androidx.paging.filter
+import java.util.concurrent.ConcurrentHashMap
+import com.example.smstextapp.SmsMessage
+import com.example.smstextapp.ui.UiModel
 
 class ConversationViewModel(
     private val repository: SmsRepository
@@ -54,17 +61,58 @@ class ConversationViewModel(
     private val _selectedConversationId = MutableStateFlow<Long?>(null)
     val selectedConversationId: StateFlow<Long?> = _selectedConversationId
 
-    // Paging 3 Messages Flow
+    // Paging 3 Messages Flow with Separators
     @OptIn(ExperimentalCoroutinesApi::class)
-    val messages: Flow<PagingData<SmsMessage>> = _selectedConversationId
+    val messages: Flow<PagingData<com.example.smstextapp.ui.UiModel>> = _selectedConversationId
         .flatMapLatest { threadId ->
             if (threadId == null) {
                 flowOf(PagingData.empty())
             } else {
                 repository.getMessagesPaged(threadId)
+                    .map { pagingData -> 
+                         transformPagingData(pagingData)
+                    }
                     .cachedIn(viewModelScope)
             }
         }
+    
+    private fun transformPagingData(pagingData: PagingData<SmsMessage>): PagingData<UiModel> {
+        // Use a synchronized set to track seen IDs for this generation of PagingData
+        // This prevents crash: "Key ... was already used" if PagingSource yields duplicates due to offset shifts
+        val seenIds = ConcurrentHashMap.newKeySet<Long>()
+        
+        return pagingData
+            .filter { msg -> 
+                seenIds.add(msg.id)
+            }
+            .map { message -> 
+                UiModel.MessageItem(message)
+            }
+            .insertSeparators { before: UiModel.MessageItem?, after: UiModel.MessageItem? ->
+            if (after == null) {
+                // End of list (Oldest/Top)
+                return@insertSeparators if (before != null) {
+                    UiModel.DateSeparator(before.message.date)
+                } else {
+                    null
+                }
+            }
+
+            if (before == null) {
+                // Start of list (Newest/Bottom)
+                return@insertSeparators null
+            }
+            
+            val date1 = before.message.date
+            val date2 = after.message.date
+            
+            if (!com.example.smstextapp.utils.DateTimeUtils.isSameDay(date1, date2)) {
+                UiModel.DateSeparator(date1)
+            } else {
+                null
+            }
+        }
+    }
 
     
     // Hold the display name for the Title bar

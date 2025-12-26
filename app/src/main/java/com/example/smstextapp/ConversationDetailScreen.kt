@@ -232,15 +232,28 @@ fun ConversationDetailScreen(
             
             items(
                 count = messages.itemCount,
-                key = messages.itemKey { it.id }
+                key = messages.itemKey { 
+                    when (it) {
+                        is com.example.smstextapp.ui.UiModel.MessageItem -> "msg_${it.message.id}"
+                        is com.example.smstextapp.ui.UiModel.DateSeparator -> "sep_${it.date}"
+                    }
+                },
+                contentType = { messages[it] }
             ) { index ->
-                val message = messages[index]
-                if (message != null) {
-                    MessageBubble(
-                        message = message,
-                        onResendClick = { msg -> showResendDialog = msg }
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
+                val item = messages[index]
+                if (item != null) {
+                    when (item) {
+                        is com.example.smstextapp.ui.UiModel.MessageItem -> {
+                            MessageBubble(
+                                message = item.message,
+                                onResendClick = { msg -> showResendDialog = msg }
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                        is com.example.smstextapp.ui.UiModel.DateSeparator -> {
+                             DateHeader(date = item.date)
+                        }
+                    }
                 }
             }
         }
@@ -372,5 +385,21 @@ fun MessageBubble(
                     }
             )
         }
+    }
+}
+
+@Composable
+fun DateHeader(date: Long) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = com.example.smstextapp.utils.DateTimeUtils.formatConversationDate(date),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+        )
     }
 }
