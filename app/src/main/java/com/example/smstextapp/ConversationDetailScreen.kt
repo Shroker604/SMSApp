@@ -3,6 +3,7 @@ package com.example.smstextapp
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -315,8 +316,9 @@ fun MessageBubble(
                         model = message.imageUri,
                         contentDescription = "MMS Image",
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 200.dp),
+                            .width(240.dp) // Fixed width to prevent measurement loop with parent Surface
+                            .heightIn(min = 100.dp, max = 300.dp)
+                            .clip(RoundedCornerShape(8.dp)),
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop
                     )
                 }
