@@ -184,6 +184,13 @@ class ConversationViewModel(
         }
     }
 
+    fun deleteConversation(threadId: Long) {
+        viewModelScope.launch {
+            repository.deleteConversation(threadId)
+            loadConversations()
+        }
+    }
+
     fun openConversation(threadId: Long, rawAddress: String, displayName: String) {
         _selectedConversationId.value = threadId
         _selectedConversationRawAddress.value = rawAddress

@@ -19,6 +19,10 @@ interface LocalMessageDao {
     
     @Query("DELETE FROM local_messages WHERE threadId = :threadId")
     suspend fun clearAllMessagesForThread(threadId: Long)
+    
+    @Query("DELETE FROM local_messages WHERE threadId = :threadId")
+    suspend fun deleteByThreadId(threadId: Long)
+
     @Query("DELETE FROM local_messages WHERE id = :id")
     suspend fun deleteById(id: Long)
 }

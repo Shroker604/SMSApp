@@ -186,6 +186,24 @@ class SmsRepository(
         return blockRepository.getAllBlockedNumbers()
     }
 
+    suspend fun deleteConversation(threadId: Long) = withContext(Dispatchers.IO) {
+        try {
+            // Delete from System Provider
+            context.contentResolver.delete(
+                android.net.Uri.parse("content://mms-sms/conversations/$threadId"),
+                null,
+                null
+            )
+            // Also delete from local cache
+            localConversationDao.deleteByThreadId(threadId)
+            localMessageDao.deleteByThreadId(threadId) // If we still have local messages?
+            
+            triggerSync() // Ensure everything is consistent
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     private fun querySmsConversations(): List<Conversation> {
         val conversations = mutableListOf<Conversation>()
         val uri = Telephony.Sms.CONTENT_URI // Query ALL SMS (Inbox, Sent, etc)

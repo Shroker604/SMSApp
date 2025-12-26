@@ -27,4 +27,8 @@ object DateTimeUtils {
              fullFormat.format(Date(timestamp))
         }
     }
+
+    fun formatMessageTime(timestamp: Long): String {
+        return timeOnlyFormat.format(Date(timestamp))
+    }
 }

@@ -169,7 +169,8 @@ fun ConversationListScreen(
                                             ) 
                                         },
                                         onTogglePin = { viewModel.togglePin(conversation.threadId, conversation.isPinned) },
-                                        onMarkUnread = { viewModel.markAsUnread(conversation.threadId) }
+                                        onMarkUnread = { viewModel.markAsUnread(conversation.threadId) },
+                                        onDelete = { viewModel.deleteConversation(conversation.threadId) }
                                     )
                                 }
                             }
@@ -199,7 +200,8 @@ fun ConversationItem(
     conversation: Conversation,
     onClick: () -> Unit,
     onTogglePin: () -> Unit,
-    onMarkUnread: () -> Unit
+    onMarkUnread: () -> Unit,
+    onDelete: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -274,6 +276,13 @@ fun ConversationItem(
                 text = { Text("Mark as unread") },
                 onClick = {
                     onMarkUnread()
+                    showMenu = false
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                onClick = {
+                    onDelete()
                     showMenu = false
                 }
             )

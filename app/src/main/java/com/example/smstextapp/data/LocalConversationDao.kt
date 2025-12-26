@@ -23,4 +23,7 @@ interface LocalConversationDao {
     // For partial updates if needed
     @Query("UPDATE local_conversations SET isPinned = :isPinned WHERE threadId = :threadId")
     suspend fun updatePinStatus(threadId: Long, isPinned: Boolean)
+    
+    @Query("DELETE FROM local_conversations WHERE threadId = :threadId")
+    suspend fun deleteByThreadId(threadId: Long)
 }

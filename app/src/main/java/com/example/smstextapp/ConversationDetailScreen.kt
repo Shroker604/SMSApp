@@ -338,6 +338,17 @@ fun MessageBubble(
                         fontSize = 16.sp
                     )
                 }
+                
+                // Timestamp
+                Text(
+                    text = com.example.smstextapp.utils.DateTimeUtils.formatMessageTime(message.date),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = textColor.copy(alpha = 0.7f),
+                    modifier = Modifier
+                        .padding(end = 8.dp, bottom = 4.dp)
+                        .align(Alignment.End),
+                    fontSize = 10.sp
+                )
             }
         }
         

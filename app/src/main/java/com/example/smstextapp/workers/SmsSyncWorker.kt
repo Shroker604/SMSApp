@@ -44,29 +44,10 @@ class SmsSyncWorker(
             localConversationDao.clearAll() 
             localConversationDao.insertAll(localConversations)
             
-            // 5. Sync Messages for each conversation
-            // In a real app, we might limit this to "Active" or "Recent" threads to save time.
-            // For now, we sync ALL. (Batching could be improved)
             
-            localConversations.forEach { conversation ->
-                val systemMessages = smsRepository.getMessages(conversation.threadId)
-                val localMessages = systemMessages.map { msg ->
-                    LocalMessage(
-                        id = msg.id,
-                        threadId = conversation.threadId,
-                        address = msg.address,
-                        body = msg.body,
-                        date = msg.date,
-                        isSent = msg.isSent,
-                        isMms = msg.isMms, 
-                        type = msg.type
-                    ) 
-                }
-                
-                // Atomic replace for thread logic (Preserve Optimistic Messages with ID < 0)
-                localMessageDao.clearSystemMessagesForThread(conversation.threadId)
-                localMessageDao.insertAll(localMessages)
-            }
+            // NOTE: We no longer sync messages to Room because ConversationDetailScreen 
+            // now uses Paging 3 to query the System Provider directly.
+            // This makes the worker much faster (Snapshotting conversations only).
             
             Result.success()
         } catch (e: Exception) {
