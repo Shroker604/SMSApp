@@ -284,9 +284,9 @@ class SmsRepository(
                     // Resolve Group Names
                     val recipients = getMmsRecipients(mmsId)
                     val displayName = if (recipients.isNotEmpty()) {
-                        recipients.joinToString(", ") { addr ->
+                        recipients.map { addr ->
                              contactRepository.resolveRecipientInfo(addr).displayName
-                        }
+                        }.distinct().joinToString(", ")
                     } else {
                         "MMS Conversation"
                     }
