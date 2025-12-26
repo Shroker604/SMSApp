@@ -1,7 +1,6 @@
 package com.example.smstextapp
 
 import android.Manifest
-import android.text.format.DateUtils
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
@@ -23,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -41,6 +41,7 @@ fun ConversationListScreen(
     val permissionsState = com.google.accompanist.permissions.rememberMultiplePermissionsState(
         permissions = listOf(
             Manifest.permission.READ_SMS,
+            Manifest.permission.SEND_SMS,
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.POST_NOTIFICATIONS
         )
@@ -60,7 +61,7 @@ fun ConversationListScreen(
     }
 
     if (permissionsState.allPermissionsGranted) {
-        val conversations by viewModel.filteredConversations.collectAsState()
+        val uiState by viewModel.conversationListState.collectAsState()
         val searchQuery by viewModel.searchQuery.collectAsState()
         
         var showContactPicker by remember { mutableStateOf(false) }
@@ -116,27 +117,66 @@ fun ConversationListScreen(
                 }
             }
         ) { padding ->
-             // Content
-             val isLoading by viewModel.isLoading.collectAsState()
-
-             if (isLoading) {
-                 Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                     CircularProgressIndicator()
-                 }
-             } else if (conversations.isEmpty()) {
-                 Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                     Text(if (searchQuery.isNotEmpty()) "No matches found" else "No conversations")
-                 }
-             } else {
-                 LazyColumn(
-                     state = listState,
-                     modifier = Modifier.padding(padding)
-                 ) {
-                     items(conversations) { conversation ->
-                         ConversationItem(conversation, viewModel)
-                     }
-                 }
-             }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                // Content based on UiState
+                when (val state = uiState) {
+                    is com.example.smstextapp.ui.UiState.Loading -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    is com.example.smstextapp.ui.UiState.Error -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Error loading messages", color = MaterialTheme.colorScheme.error)
+                                Text(state.message, style = MaterialTheme.typography.bodySmall)
+                                Button(onClick = { viewModel.loadConversations() }) {
+                                    Text("Retry")
+                                }
+                            }
+                        }
+                    }
+                    is com.example.smstextapp.ui.UiState.Success -> {
+                        val conversations = state.data
+                        if (conversations.isEmpty()) {
+                            if (searchQuery.isNotBlank()) {
+                                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("No results found.")
+                                }
+                            } else {
+                                // Empty State
+                                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("No conversations yet.")
+                                }
+                            }
+                        } else {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(conversations, key = { it.threadId }) { conversation ->
+                                    ConversationItem(
+                                        conversation = conversation,
+                                        onClick = { 
+                                            viewModel.openConversation(
+                                                conversation.threadId, 
+                                                conversation.rawAddress,
+                                                conversation.displayName
+                                            ) 
+                                        },
+                                        onTogglePin = { viewModel.togglePin(conversation.threadId, conversation.isPinned) },
+                                        onMarkUnread = { viewModel.markAsUnread(conversation.threadId) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     } else {
         Column(
@@ -157,7 +197,9 @@ fun ConversationListScreen(
 @Composable
 fun ConversationItem(
     conversation: Conversation,
-    viewModel: ConversationViewModel = viewModel()
+    onClick: () -> Unit,
+    onTogglePin: () -> Unit,
+    onMarkUnread: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -165,9 +207,7 @@ fun ConversationItem(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
-                onClick = { 
-                    viewModel.openConversation(conversation.threadId, conversation.rawAddress, conversation.displayName) 
-                },
+                onClick = onClick,
                 onLongClick = { showMenu = true }
             )
             .padding(16.dp)
@@ -183,7 +223,7 @@ fun ConversationItem(
         Spacer(modifier = Modifier.width(16.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = conversation.displayName,
                     style = MaterialTheme.typography.titleMedium,
@@ -193,7 +233,7 @@ fun ConversationItem(
                 if (conversation.isPinned) {
                     Spacer(modifier = Modifier.width(4.dp))
                     Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.Star, // Using Star as Pin equivalent if PushPin missing, or standard Star
+                        imageVector = androidx.compose.material.icons.Icons.Default.Star,
                         contentDescription = "Pinned",
                         modifier = Modifier.size(16.dp),
                         tint = MaterialTheme.colorScheme.primary
@@ -213,7 +253,7 @@ fun ConversationItem(
         Spacer(modifier = Modifier.width(8.dp))
         
         Text(
-            text = DateUtils.getRelativeTimeSpanString(conversation.date).toString(),
+            text = com.example.smstextapp.utils.DateTimeUtils.formatConversationDate(conversation.date),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -226,18 +266,17 @@ fun ConversationItem(
             DropdownMenuItem(
                 text = { Text(if (conversation.isPinned) "Unpin" else "Pin") },
                 onClick = {
-                    viewModel.togglePin(conversation.threadId, conversation.isPinned)
+                    onTogglePin()
                     showMenu = false
                 }
             )
             DropdownMenuItem(
                 text = { Text("Mark as unread") },
                 onClick = {
-                    viewModel.markAsUnread(conversation.threadId)
+                    onMarkUnread()
                     showMenu = false
                 }
             )
-            // Future options: Block, Delete
         }
     }
 }

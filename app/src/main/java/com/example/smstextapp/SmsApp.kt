@@ -17,7 +17,15 @@ class AppContainer(context: android.content.Context) {
     val contactRepository = ContactRepository(context)
     val smsManager: android.telephony.SmsManager = context.getSystemService(android.telephony.SmsManager::class.java)
     // SmsRepository will need metadataRepository soon
-    val smsRepository = SmsRepository(context, blockRepository, contactRepository, metadataRepository, scheduledMessageRepository)
+    val smsRepository = SmsRepository(
+        context, 
+        blockRepository, 
+        contactRepository, 
+        metadataRepository, 
+        scheduledMessageRepository,
+        database.localConversationDao(),
+        database.localMessageDao()
+    )
 }
 
 class SmsApp : Application() {
@@ -26,5 +34,9 @@ class SmsApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        
+        // Start Sync Engine
+        container.smsRepository.registerObserver() // Listen for changes
+        container.smsRepository.triggerSync()      // Initial Sync
     }
 }

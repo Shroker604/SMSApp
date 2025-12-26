@@ -12,19 +12,60 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 // Imports cleaned up
 import androidx.lifecycle.viewmodel.CreationExtras
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 
 class ConversationViewModel(
     private val repository: SmsRepository
 ) : ViewModel() {
     
-    private val _conversations = MutableStateFlow<List<Conversation>>(emptyList())
-    val conversations: StateFlow<List<Conversation>> = _conversations
+    // Search Query (Must be initialized before combined flows)
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery
 
-    private val _messages = MutableStateFlow<List<SmsMessage>>(emptyList())
-    val messages: StateFlow<List<SmsMessage>> = _messages
+    // Standardized UI State
+    private val _conversationListState = MutableStateFlow<com.example.smstextapp.ui.UiState<List<Conversation>>>(com.example.smstextapp.ui.UiState.Loading)
+    val conversationListState: StateFlow<com.example.smstextapp.ui.UiState<List<Conversation>>> = combine(
+        _conversationListState,
+        _searchQuery
+    ) { state, query ->
+        when (state) {
+            is com.example.smstextapp.ui.UiState.Success -> {
+                if (query.isBlank()) {
+                    state
+                } else {
+                    val filtered = state.data.filter {
+                        it.displayName.contains(query, ignoreCase = true) ||
+                        it.snippet.contains(query, ignoreCase = true) ||
+                        it.rawAddress.contains(query)
+                    }
+                    com.example.smstextapp.ui.UiState.Success(filtered)
+                }
+            }
+            else -> state
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.smstextapp.ui.UiState.Loading)
 
+    // Keep selected ID state separate as it drives navigation/logic
     private val _selectedConversationId = MutableStateFlow<Long?>(null)
     val selectedConversationId: StateFlow<Long?> = _selectedConversationId
+
+    // Paging 3 Messages Flow
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val messages: Flow<PagingData<SmsMessage>> = _selectedConversationId
+        .flatMapLatest { threadId ->
+            if (threadId == null) {
+                flowOf(PagingData.empty())
+            } else {
+                repository.getMessagesPaged(threadId)
+                    .cachedIn(viewModelScope)
+            }
+        }
+
     
     // Hold the display name for the Title bar
     private val _selectedConversationDisplayName = MutableStateFlow<String>("")
@@ -33,44 +74,25 @@ class ConversationViewModel(
     // Hold the raw address for sending
     private val _selectedConversationRawAddress = MutableStateFlow<String>("")
 
-    // Search Query
-    private val _searchQuery = MutableStateFlow("")
-    val searchQuery: StateFlow<String> = _searchQuery
 
-    // Filtered conversations
-    val filteredConversations: StateFlow<List<Conversation>> = combine(
-        _conversations,
-        _searchQuery
-    ) { conversations, query ->
-        if (query.isBlank()) {
-            conversations
-        } else {
-            conversations.filter {
-                it.displayName.contains(query, ignoreCase = true) ||
-                it.snippet.contains(query, ignoreCase = true) ||
-                it.rawAddress.contains(query)
+
+    init {
+        viewModelScope.launch {
+            try {
+                repository.getConversationsFlow().collect { list ->
+                    _conversationListState.value = com.example.smstextapp.ui.UiState.Success(list)
+                }
+            } catch (e: Exception) {
+                _conversationListState.value = com.example.smstextapp.ui.UiState.Error("Error flowing data: ${e.message}")
             }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    // Loading State
-    private val _isLoading = MutableStateFlow(true)
-    val isLoading: StateFlow<Boolean> = _isLoading
+        
+        loadConversations() 
+    }
 
     fun loadConversations() {
-        viewModelScope.launch {
-            _isLoading.value = true
-            try {
-                _conversations.value = repository.getConversations()
-            } catch (e: SecurityException) {
-                // Handle permission denial or propagate error state
-                _conversations.value = emptyList()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                _isLoading.value = false
-            }
-        }
+        // Trigger background sync instead of forcing UI thread query
+        repository.triggerSync()
     }
     
     fun onSearchQueryChanged(query: String) {
@@ -89,16 +111,11 @@ class ConversationViewModel(
             return
         }
         val numbers = address.split(";")
-        // If ANY number in the thread is blocked, we consider the thread blocked
         val isBlocked = numbers.any { 
             val blocked = repository.getBlockedNumbers().contains(it.replace(Regex("[^0-9+]"), ""))
             blocked
         }
         _isCurrentConversationBlocked.value = isBlocked
-        
-        // Also check against block repo directly if needed, but repo.getBlockedNumbers() is robust.
-        // Actually, let's use the repo's internal check if possible, but we don't have access to BlockRepo here directly.
-        // We'll rely on our manual normalized check matching BlockRepository's normalize.
     }
 
     fun toggleBlockStatus() {
@@ -110,23 +127,15 @@ class ConversationViewModel(
         
         viewModelScope.launch {
             if (currentlyBlocked) {
-                // Unblock all
                 numbers.forEach { repository.unblockNumber(it) }
             } else {
-                // Block all
                 numbers.forEach { repository.blockNumber(it) }
             }
             
-            // Refresh state
             checkBlockStatus()
-            
-            // Refresh conversation list (to hide/show item)
             loadConversations()
             
-            // If we just blocked it, we usually close the conversation? 
-            // Google Messages behavior: You block it, it kicks you back to list.
-            // If you unblock it, you stay.
-            if (!currentlyBlocked) { // We just blocked it
+            if (!currentlyBlocked) { 
                  closeConversation()
             }
         }
@@ -139,7 +148,7 @@ class ConversationViewModel(
     fun unblockNumber(number: String) {
         viewModelScope.launch {
             repository.unblockNumber(number)
-            loadConversations() // Refresh list as unblocked items might reappear
+            loadConversations() 
         }
     }
 
@@ -155,7 +164,7 @@ class ConversationViewModel(
     fun togglePin(threadId: Long, currentPinStatus: Boolean) {
         viewModelScope.launch {
             repository.setPinned(threadId, !currentPinStatus)
-            loadConversations() // Refresh list
+            loadConversations() 
         }
     }
 
@@ -166,45 +175,65 @@ class ConversationViewModel(
         }
     }
 
+    fun markAsUnreadAndClose() {
+        val threadId = _selectedConversationId.value ?: return
+        viewModelScope.launch {
+            repository.markAsUnread(threadId)
+            loadConversations() 
+            closeConversation()
+        }
+    }
+
     fun openConversation(threadId: Long, rawAddress: String, displayName: String) {
         _selectedConversationId.value = threadId
         _selectedConversationRawAddress.value = rawAddress
         _selectedConversationDisplayName.value = displayName
+        
+        // Reset state? Paging flow updates automatically when ID changes.
+        
         viewModelScope.launch {
             checkBlockStatus()
-            // Continuously load or just load once? ideally observe.
-            // For now, load once.
-            refreshMessages()
+            // startCollectingMessages(threadId) // Removed for Paging
             repository.markAsRead(threadId)
         }
     }
     
-    private suspend fun refreshMessages() {
-        val threadId = _selectedConversationId.value ?: return
-        try {
-            _messages.value = repository.getMessages(threadId)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+    
+    // Kept for manual refresh actions (sending) - Updates Conversation List
+    private fun refreshMessages() {
+        repository.triggerSync()
     }
 
     fun sendMessage(body: String) {
         val address = _selectedConversationRawAddress.value
+        val threadId = _selectedConversationId.value
         if (address.isBlank()) return
         
         viewModelScope.launch {
-            repository.sendMessage(address, body)
+            repository.sendMessage(address, body, threadId)
             // Refresh messages
+            refreshMessages()
+        }
+    }
+
+    fun resendMessage(message: SmsMessage) {
+        val address = _selectedConversationRawAddress.value
+        val threadId = _selectedConversationId.value ?: return
+        
+        viewModelScope.launch {
+            repository.resendMessage(message.id, address, message.body, threadId)
+             // Refresh messages
             refreshMessages()
         }
     }
 
     fun sendMms(body: String, uri: android.net.Uri) {
          val address = _selectedConversationRawAddress.value
+         val threadId = _selectedConversationId.value
         if (address.isBlank()) return
 
         viewModelScope.launch {
-            repository.sendMessage(address, "$body [MMS Attachment: $uri]")
+            repository.sendMessage(address, "$body [MMS Attachment: $uri]", threadId)
             refreshMessages()
         }
     }
@@ -275,7 +304,6 @@ class ConversationViewModel(
 
     fun closeConversation() {
         _selectedConversationId.value = null
-        _messages.value = emptyList()
     }
 
     companion object {

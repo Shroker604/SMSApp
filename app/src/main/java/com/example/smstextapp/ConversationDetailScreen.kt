@@ -22,27 +22,39 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+
+import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.paging.compose.itemKey
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationDetailScreen(
     viewModel: ConversationViewModel = viewModel()
 ) {
-    val messages by viewModel.messages.collectAsState()
+    // Paging Items
+    val messages = viewModel.messages.collectAsLazyPagingItems()
+    
+    val isBlocked by viewModel.isCurrentConversationBlocked.collectAsState()
     val title by viewModel.selectedConversationDisplayName.collectAsState()
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     var messageText by remember { mutableStateOf("") }
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState() // Use explicit package or import
-    val context = androidx.compose.ui.platform.LocalContext.current // Defined at top level for use in callbacks
-
+    // State for resend dialog
+    var showResendDialog by remember { mutableStateOf<SmsMessage?>(null) }
+    
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    
     // Handle back button to close conversation
     BackHandler {
         viewModel.closeConversation()
     }
 
     var showMenu by remember { mutableStateOf(false) }
-
-    val isBlocked by viewModel.isCurrentConversationBlocked.collectAsState()
 
     Scaffold(
         topBar = {
@@ -120,6 +132,13 @@ fun ConversationDetailScreen(
                                 showScheduler()
                             }
                         )
+                        DropdownMenuItem(
+                            text = { Text("Mark as unread") },
+                            onClick = {
+                                showMenu = false
+                                viewModel.markAsUnreadAndClose()
+                            }
+                        )
                     }
                 }
             )
@@ -132,14 +151,6 @@ fun ConversationDetailScreen(
                 
                 selectedImageUri?.let { uri ->
                      Box(modifier = Modifier.padding(8.dp)) {
-                         // We need Coil AsyncImage here. Assuming Coil is available (Task says "Add Coil dependency" checked)
-                         // But imports might be missing. We'll use a simple placeholder Text if Image not working, 
-                         // but ideally AsyncImage. 
-                         // Since I can't guarantee Coil imports in this file yet, I'll add them.
-                         // But replace_file_content is mostly local. 
-                         // I'll assume usage of "coil.compose.AsyncImage" fully qualified if needed or add imports later.
-                         // Actually, let's use a Text placeholder for safety in this step, then Refine.
-                         // "Image Selected: $uri"
                          Row(
                              verticalAlignment = Alignment.CenterVertically,
                              modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)).padding(8.dp)
@@ -192,6 +203,7 @@ fun ConversationDetailScreen(
                                 // Feedback
                                 android.widget.Toast.makeText(context, "Sending...", android.widget.Toast.LENGTH_SHORT).show()
                                 viewModel.sendMessage(messageText)
+                                // Keep keyboard open? 
                                 messageText = ""
                             }
                         },
@@ -205,36 +217,65 @@ fun ConversationDetailScreen(
             }
         }
     ) { padding ->
+        // Paging 3 List - Replacing manual state handling
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 8.dp),
-            verticalArrangement = Arrangement.Bottom // This doesn't auto-scroll to bottom but helps with layout
+            reverseLayout = true // PagingSource loads Newest -> Oldest. Reverse puts Newest at bottom.
         ) {
-            items(messages) { message ->
-                MessageBubble(message)
-                Spacer(modifier = Modifier.height(4.dp))
-            }
-            
-            // Add some spacing at the bottom so latest message isn't hidden by keyboard/input
             item { 
                  Spacer(modifier = Modifier.height(8.dp))
             }
-        }
-        
-        // Auto scroll to bottom when new messages arrive
-        LaunchedEffect(messages.size) {
-            if (messages.isNotEmpty()) {
-                listState.animateScrollToItem(messages.size - 1)
+            
+            items(
+                count = messages.itemCount,
+                key = messages.itemKey { it.id }
+            ) { index ->
+                val message = messages[index]
+                if (message != null) {
+                    MessageBubble(
+                        message = message,
+                        onResendClick = { msg -> showResendDialog = msg }
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
             }
         }
+    }
+
+    // Resend Dialog State
+    if (showResendDialog != null) {
+        AlertDialog(
+            onDismissRequest = { showResendDialog = null },
+            title = { Text("Resend Message?") },
+            text = { Text("This message failed to send. Would you like to try again?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.resendMessage(showResendDialog!!)
+                        showResendDialog = null
+                    }
+                ) {
+                    Text("Resend")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResendDialog = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
 @Composable
-fun MessageBubble(message: SmsMessage) {
+fun MessageBubble(
+    message: SmsMessage, 
+    onResendClick: (SmsMessage) -> Unit = {}
+) {
     val isSent = message.isSent
     val alignment = if (isSent) Alignment.End else Alignment.Start
     val color = if (isSent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
@@ -249,23 +290,59 @@ fun MessageBubble(message: SmsMessage) {
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = alignment
     ) {
+        val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+        val context = androidx.compose.ui.platform.LocalContext.current
+        
         Surface(
             color = color,
             shape = shape,
-            modifier = Modifier.widthIn(max = 280.dp)
+            modifier = Modifier
+                .widthIn(max = 280.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onLongPress = {
+                            if (message.body.isNotBlank()) {
+                                clipboardManager.setText(AnnotatedString(message.body))
+                                android.widget.Toast.makeText(context, "Text copied", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
+                }
         ) {
-            Text(
-                text = message.body,
-                color = textColor,
-                modifier = Modifier.padding(12.dp),
-                fontSize = 16.sp
-            )
+            Column {
+                if (message.imageUri != null) {
+                    coil.compose.AsyncImage(
+                        model = message.imageUri,
+                        contentDescription = "MMS Image",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                    )
+                }
+                if (message.body.isNotBlank() && message.body != "Multimedia Message") {
+                    Text(
+                        text = message.body,
+                        color = textColor,
+                        modifier = Modifier.padding(12.dp),
+                        fontSize = 16.sp
+                    )
+                } else if (message.imageUri == null) {
+                    // Fallback for text-only or failed parsing
+                     Text(
+                        text = message.body,
+                        color = textColor,
+                        modifier = Modifier.padding(12.dp),
+                        fontSize = 16.sp
+                    )
+                }
+            }
         }
         
         if (isSent) {
             val statusText = when (message.type) {
                 android.provider.Telephony.Sms.MESSAGE_TYPE_OUTBOX -> "Sending..."
-                android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED -> "Failed"
+                android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED -> "Failed (Tap to Resend)"
                 android.provider.Telephony.Sms.MESSAGE_TYPE_QUEUED -> "Queued"
                 android.provider.Telephony.Sms.MESSAGE_TYPE_SENT -> "Sent"
                 else -> ""
@@ -275,8 +352,12 @@ fun MessageBubble(message: SmsMessage) {
                 Text(
                     text = statusText,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 2.dp, start = 4.dp, end = 4.dp)
+                    color = if (message.type == android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(top = 2.dp, start = 4.dp, end = 4.dp)
+                        .clickable(enabled = message.type == android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED) {
+                            onResendClick(message)
+                        }
                 )
             }
         }

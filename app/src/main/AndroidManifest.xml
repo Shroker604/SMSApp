@@ -72,6 +72,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- Receiver for MMS Download Completion -->
+        <receiver
+            android:name=".MmsDownloadedReceiver"
+            android:exported="true">
+             <intent-filter>
+                <action android:name="com.example.smstextapp.MMS_DOWNLOADED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Service that handles sending MMS messages -->
         <service
             android:name=".HeadlessSmsSendService"

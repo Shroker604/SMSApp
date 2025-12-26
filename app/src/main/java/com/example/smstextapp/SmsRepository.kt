@@ -3,9 +3,12 @@ package com.example.smstextapp
 import android.content.ContentResolver
 import android.content.Context
 import android.provider.Telephony
+import com.example.smstextapp.data.extractSmsConversation
+import com.example.smstextapp.data.extractSmsMessage
 import com.example.smstextapp.data.ContactRepository
 import com.example.smstextapp.data.MetadataRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 data class Conversation(
@@ -24,7 +27,9 @@ data class SmsMessage(
     val address: String,
     val body: String,
     val date: Long,
-    val type: Int // 1 = Inbox, 2 = Sent
+    val type: Int, // 1 = Inbox, 2 = Sent
+    val imageUri: String? = null,
+    val isMms: Boolean = false
 ) {
     val isSent: Boolean get() = type != Telephony.Sms.MESSAGE_TYPE_INBOX
 }
@@ -36,8 +41,43 @@ class SmsRepository(
     private val blockRepository: BlockRepository,
     val contactRepository: ContactRepository, // Made public for ViewModel use
     private val metadataRepository: MetadataRepository,
-    private val scheduledMessageRepository: com.example.smstextapp.data.ScheduledMessageRepository
+    private val scheduledMessageRepository: com.example.smstextapp.data.ScheduledMessageRepository,
+    private val localConversationDao: com.example.smstextapp.data.LocalConversationDao,
+    private val localMessageDao: com.example.smstextapp.data.LocalMessageDao
 ) {
+    
+    // ContentObserver for efficient sync
+    private val smsObserver = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            super.onChange(selfChange)
+            triggerSync()
+        }
+    }
+
+    fun registerObserver() {
+        context.contentResolver.registerContentObserver(
+            Telephony.Sms.CONTENT_URI, 
+            true, 
+            smsObserver
+        )
+        // Also observe MMS if needed, but SMS URI often covers thread updates
+    }
+    
+    fun unregisterObserver() {
+        context.contentResolver.unregisterContentObserver(smsObserver)
+    }
+
+    fun triggerSync() {
+        val workRequest = androidx.work.OneTimeWorkRequest.Builder(com.example.smstextapp.workers.SmsSyncWorker::class.java)
+            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .build()
+
+        androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+            "SmsSync",
+            androidx.work.ExistingWorkPolicy.KEEP, 
+            workRequest
+        )
+    }
     // ... existing ...
 
     suspend fun getThreadIdFor(address: String): Long = withContext(Dispatchers.IO) {
@@ -62,7 +102,8 @@ class SmsRepository(
         scheduledMessageRepository.scheduleMessage(threadId, address, body, timeMillis)
     }
 
-    suspend fun getConversations(): List<Conversation> = withContext(Dispatchers.IO) {
+    // This is the "Live" system fetcher, used by the Worker to populate cache.
+    suspend fun fetchSystemConversations(): List<Conversation> = withContext(Dispatchers.IO) {
         val smsList = querySmsConversations()
         val mmsList = queryMmsConversations()
         
@@ -107,6 +148,39 @@ class SmsRepository(
         android.util.Log.d("SmsRepository", "Merged count: ${finalConversations.size}")
         finalConversations
     }
+
+    // Switch to observe Room
+    suspend fun getConversations(): List<Conversation> {
+        return localConversationDao.getAllConversationsSync().map { local ->
+            Conversation(
+                threadId = local.threadId,
+                rawAddress = local.rawAddress,
+                displayName = local.displayName,
+                photoUri = local.photoUri,
+                snippet = local.snippet,
+                date = local.date,
+                read = local.read,
+                isPinned = local.isPinned
+            )
+        }
+    }
+
+    fun getConversationsFlow(): kotlinx.coroutines.flow.Flow<List<Conversation>> {
+        return localConversationDao.getAllConversations().map { localList ->
+            localList.map { local ->
+                Conversation(
+                    threadId = local.threadId,
+                    rawAddress = local.rawAddress,
+                    displayName = local.displayName,
+                    photoUri = local.photoUri,
+                    snippet = local.snippet,
+                    date = local.date,
+                    read = local.read,
+                    isPinned = local.isPinned
+                )
+            }
+        }
+    }
     
     fun getBlockedNumbers(): Set<String> {
         return blockRepository.getAllBlockedNumbers()
@@ -133,35 +207,11 @@ class SmsRepository(
             )
 
             cursor?.use {
-                val threadIdIdx = it.getColumnIndex(Telephony.Sms.THREAD_ID)
-                val addressIdx = it.getColumnIndex(Telephony.Sms.ADDRESS)
-                val bodyIdx = it.getColumnIndex(Telephony.Sms.BODY)
-                val dateIdx = it.getColumnIndex(Telephony.Sms.DATE)
-                val readIdx = it.getColumnIndex(Telephony.Sms.READ)
-
                 while (it.moveToNext()) {
-                    val threadId = it.getLong(threadIdIdx)
-                    // Skip if we already have this thread (simple dedupe for SMS-only pass)
-                    if (conversations.any { c -> c.threadId == threadId }) continue
+                    val conversation = it.extractSmsConversation(contactRepository) ?: continue
+                    if (conversations.any { c -> c.threadId == conversation.threadId }) continue
                     
-                    val address = it.getString(addressIdx) ?: "Unknown"
-                    val body = it.getString(bodyIdx) ?: ""
-                    val date = it.getLong(dateIdx)
-                    val read = it.getInt(readIdx) == 1
-
-                    val info = contactRepository.resolveRecipientInfo(address)
-
-                    conversations.add(
-                        Conversation(
-                            threadId = threadId,
-                            rawAddress = info.rawAddress,
-                            displayName = info.displayName,
-                            photoUri = info.photoUri,
-                            snippet = body,
-                            date = date,
-                            read = read
-                        )
-                    )
+                    conversations.add(conversation)
                 }
             }
         } catch (e: Exception) {
@@ -211,7 +261,7 @@ class SmsRepository(
                     
                     val mmsId = it.getLong(it.getColumnIndex(Telephony.Mms._ID))
                     // If subject is missing, try to get text body.
-                    val snippet = if (!subject.isNullOrBlank()) subject else getMmsText(mmsId)
+                    val snippet = if (!subject.isNullOrBlank()) subject else getMmsContent(mmsId).first
                     
                     conversations.add(
                         Conversation(
@@ -240,120 +290,129 @@ class SmsRepository(
 
 
     
+    // Live Fetch (System) - kept for Worker usage
     suspend fun getMessages(threadId: Long): List<SmsMessage> = withContext(Dispatchers.IO) {
-        val smsList = querySmsMessages(threadId)
-        val mmsList = queryMmsMessages(threadId)
-        
-        (smsList + mmsList).sortedBy { it.date }
-    }
-
-    private fun querySmsMessages(threadId: Long): List<SmsMessage> {
         val messages = mutableListOf<SmsMessage>()
-        val resolver = context.contentResolver
-        val uri = Telephony.Sms.CONTENT_URI
-        
-        try {
-            val cursor = resolver.query(
-                uri,
-                arrayOf(
-                    Telephony.Sms._ID,
-                    Telephony.Sms.ADDRESS,
-                    Telephony.Sms.BODY,
-                    Telephony.Sms.DATE,
-                    Telephony.Sms.TYPE
-                ),
-                "${Telephony.Sms.THREAD_ID} = ?",
-                arrayOf(threadId.toString()),
-                null // Sort effectively handled by list merge later
-            )
-
-            cursor?.use {
-                val idIdx = it.getColumnIndex(Telephony.Sms._ID)
-                val addressIdx = it.getColumnIndex(Telephony.Sms.ADDRESS)
-                val bodyIdx = it.getColumnIndex(Telephony.Sms.BODY)
-                val dateIdx = it.getColumnIndex(Telephony.Sms.DATE)
-                val typeIdx = it.getColumnIndex(Telephony.Sms.TYPE)
-
-                while (it.moveToNext()) {
-                    messages.add(
-                        SmsMessage(
-                            id = it.getLong(idIdx),
-                            address = it.getString(addressIdx) ?: "",
-                            body = it.getString(bodyIdx) ?: "",
-                            date = it.getLong(dateIdx),
-                            type = it.getInt(typeIdx)
-                        )
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return messages
-    }
-
-    private fun queryMmsMessages(threadId: Long): List<SmsMessage> {
-        val messages = mutableListOf<SmsMessage>()
-        val uri = Telephony.Mms.CONTENT_URI
+        val uri = android.net.Uri.parse("content://mms-sms/conversations/$threadId")
+        val projection = arrayOf(
+            "transport_type",
+            "_id",
+            "body",
+            "date",
+            "type",
+            "msg_box",
+            "sub",
+            "ct_t"
+        )
         
         try {
             val cursor = context.contentResolver.query(
                 uri,
-                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX),
-                "${Telephony.Mms.THREAD_ID} = ?",
-                arrayOf(threadId.toString()),
-                null
+                projection,
+                null,
+                null,
+                "normalized_date ASC"
             )
-
+            
             cursor?.use {
-                val idIdx = it.getColumnIndex(Telephony.Mms._ID)
-                val dateIdx = it.getColumnIndex(Telephony.Mms.DATE)
-                val boxIdx = it.getColumnIndex(Telephony.Mms.MESSAGE_BOX)
-
+                val typeCol = it.getColumnIndex("transport_type")
+                val idCol = it.getColumnIndex("_id")
+                val bodyCol = it.getColumnIndex("body")
+                val dateCol = it.getColumnIndex("normalized_date")
+                 val validDateCol = if (dateCol >= 0) dateCol else it.getColumnIndex("date")
+                 
                 while (it.moveToNext()) {
-                    val mmsId = it.getLong(idIdx)
-                    var date = it.getLong(dateIdx)
+                    val transportType = it.getString(typeCol)
+                    val id = it.getLong(idCol)
+                    var date = it.getLong(validDateCol)
                     if (date < 10000000000L) date *= 1000
                     
-                    val msgBox = it.getInt(boxIdx)
-                    // Map MMS box to SMS type: 1=Inbox, 2=Sent
-                    val type = if (msgBox == Telephony.Mms.MESSAGE_BOX_SENT) Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX
+                    val isMms = transportType == "mms"
+                    var body = ""
+                    var imageUri: String? = null
+                    var msgType = 0
                     
-                    val body = getMmsText(mmsId)
+                    if (isMms) {
+                       val boxIdx = it.getColumnIndex("msg_box")
+                       val box = if (boxIdx >= 0) it.getInt(boxIdx) else 0
+                        msgType = if (box == Telephony.Mms.MESSAGE_BOX_SENT) Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX
+                        
+                        val content = getMmsContent(id)
+                        body = content.first
+                        imageUri = content.second
+                    } else {
+                        val smsTypeIdx = it.getColumnIndex("type")
+                        val bodyIdx = if (bodyCol >= 0) bodyCol else it.getColumnIndex("body")
+                        body = if (bodyIdx >= 0) it.getString(bodyIdx) ?: "" else ""
+                        msgType = if (smsTypeIdx >= 0) it.getInt(smsTypeIdx) else 1
+                    }
                     
-                    messages.add(
-                        SmsMessage(
-                            id = mmsId, // Note: IDs might collide with SMS if not careful in UI keys
-                            address = "", // Parsing MMS address is expensive, skip for now or use generic
-                            body = body,
-                            date = date,
-                            type = type
-                        )
-                    )
+                    messages.add(SmsMessage(id, "", body, date, msgType, imageUri, isMms))
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        return messages
+        
+        messages.sortedBy { it.date }
     }
 
-    private fun getMmsText(mmsId: Long): String {
+    // Paging 3 Exposure
+    fun getMessagesPaged(threadId: Long): kotlinx.coroutines.flow.Flow<androidx.paging.PagingData<SmsMessage>> {
+        return androidx.paging.Pager(
+            config = androidx.paging.PagingConfig(
+                pageSize = 20,
+                enablePlaceholders = false,
+                initialLoadSize = 20
+            ),
+            pagingSourceFactory = { com.example.smstextapp.data.SmsPagingSource(context, threadId, this) }
+        ).flow
+    }
+
+    // REMOVED: getMessagesFlow (Room) - No longer used
+    
+    // ... querySmsConversations/MmsConversations kept for Conversation List
+    // Note: User asked for "Direct System Query" generally.
+    // For now, let's keep Conversation List as is (it works fine) and focus on the Message List which was buggy.
+    // Ideally we'd page conversations too, but messages are the critical part.
+
+    // Helper to extract content more aggressively - MADE PUBLIC for SmsPagingSource
+    fun getMmsContent(mmsId: Long): Pair<String, String?> {
         var body = ""
+        var imageUri: String? = null
         val partUri = android.net.Uri.parse("content://mms/part")
-        val selection = "mid=$mmsId AND ct='text/plain'"
+        val selection = "mid=$mmsId"
         
         try {
             val cursor = context.contentResolver.query(partUri, null, selection, null, null)
             cursor?.use {
                 if (it.moveToFirst()) {
                     do {
+                        val partIdIdx = it.getColumnIndex("_id")
+                        val typeIdx = it.getColumnIndex("ct") // Content-Type
                         val textIdx = it.getColumnIndex("text")
-                        if (textIdx >= 0) {
-                            val partText = it.getString(textIdx)
-                            if (!partText.isNullOrBlank()) {
-                                body = partText
-                                break // Found the text body
+                        
+                        if (typeIdx >= 0) {
+                            val mimeType = it.getString(typeIdx) ?: ""
+                            
+                            if (mimeType.startsWith("text/") || mimeType.isBlank()) {
+                                // Try extract text
+                                if (textIdx >= 0) {
+                                    val partText = it.getString(textIdx)
+                                    if (!partText.isNullOrBlank()) {
+                                        body = partText
+                                    }
+                                }
+                            } 
+                            
+                            // Image content found
+                            if (mimeType.startsWith("image/") || mimeType.startsWith("video/")) {
+                                if (partIdIdx >= 0) {
+                                    val partId = it.getLong(partIdIdx)
+                                    // Try to copy to cache for reliable access
+                                    val cachedUri = copyPartToCache(partId, mimeType)
+                                    imageUri = cachedUri ?: "content://mms/part/$partId"
+                                }
                             }
                         }
                     } while (it.moveToNext())
@@ -363,17 +422,52 @@ class SmsRepository(
             e.printStackTrace()
         }
         
-        if (body.isEmpty()) {
-            body = "Multimedia Message" // Fallback if no text part found (e.g. image only)
+        // Final fallback: If no body found
+        if (body.isEmpty() && imageUri == null) {
+             body = "Multimedia Message (No Content Found)"
         }
-        return body
+        
+        return Pair(body, imageUri)
     }
 
-    fun sendMessage(destinationAddress: String, body: String) {
-        if (body.isBlank() || destinationAddress.isBlank()) return
+    private fun copyPartToCache(partId: Long, mimeType: String): String? {
+        try {
+            val extension = if (mimeType.contains("jpeg") || mimeType.contains("jpg")) "jpg" 
+                           else if (mimeType.contains("png")) "png" 
+                           else if (mimeType.contains("gif")) "gif" 
+                           else "dat"
+                           
+            val fileName = "mms_$partId.$extension"
+            val cacheFile = java.io.File(context.cacheDir, fileName)
+            
+            // If already cached and has size, assume good
+            if (cacheFile.exists() && cacheFile.length() > 0) {
+                return android.net.Uri.fromFile(cacheFile).toString()
+            }
+            
+            val partUri = android.net.Uri.parse("content://mms/part/$partId")
+            context.contentResolver.openInputStream(partUri)?.use { input ->
+                java.io.FileOutputStream(cacheFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            
+            return android.net.Uri.fromFile(cacheFile).toString()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return null
+        }
+    }
+
+    suspend fun sendMessage(destinationAddress: String, body: String, knownThreadId: Long? = null) = withContext(Dispatchers.IO) {
+        if (body.isBlank() || destinationAddress.isBlank()) return@withContext
         
         try {
+            // REMOVED: Optimistic Insert into Local DAO.
+            // PagingSource uses ContentObserver on system provider, so it will update automatically!
+
             // 1. Insert into DB as OUTBOX (Sending...)
+            // Standard Android behavior: Insert into System Outbox/Sent.
             val values = android.content.ContentValues().apply {
                 put(Telephony.Sms.ADDRESS, destinationAddress)
                 put(Telephony.Sms.BODY, body)
@@ -381,12 +475,14 @@ class SmsRepository(
                 put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_OUTBOX) // 4 = Outbox
                 put(Telephony.Sms.READ, 1)
             }
-            val uri = context.contentResolver.insert(Telephony.Sms.Sent.CONTENT_URI, values) ?: return
+            val uri = context.contentResolver.insert(Telephony.Sms.Sent.CONTENT_URI, values) ?: return@withContext
 
             // 2. Create PendingIntent for Status Update
+            // We still want this to update the SYSTEM status from Outbox -> Sent/Failed
             val sentIntent = android.content.Intent(context, SmsSentReceiver::class.java).apply {
                 action = SmsSentReceiver.SMS_SENT_ACTION
                 putExtra("message_uri", uri.toString())
+                // No local_message_id needed
             }
             val sentPI = android.app.PendingIntent.getBroadcast(
                 context,
@@ -396,12 +492,34 @@ class SmsRepository(
             )
 
             // 3. Send
-            val smsManager = context.getSystemService(android.telephony.SmsManager::class.java)
+            val smsManager = try {
+                context.getSystemService(android.telephony.SmsManager::class.java) ?: android.telephony.SmsManager.getDefault()
+            } catch (e: Exception) {
+                android.telephony.SmsManager.getDefault()
+            }
+            
             smsManager.sendTextMessage(destinationAddress, null, body, sentPI, null)
             
         } catch (e: Exception) {
             e.printStackTrace()
+            android.util.Log.e("SmsRepository", "sendMessage: Failed", e)
         }
+    }
+
+    suspend fun resendMessage(oldMessageId: Long, address: String, body: String, threadId: Long) = withContext(Dispatchers.IO) {
+        // Delete the old failed message from system provider
+         try {
+             context.contentResolver.delete(
+                 android.net.Uri.parse("content://sms/$oldMessageId"), 
+                 null, 
+                 null
+             )
+         } catch (e: Exception) {
+             e.printStackTrace()
+         }
+
+        // Send anew
+        sendMessage(address, body, threadId)
     }
     
     fun blockNumber(number: String) {
@@ -439,7 +557,6 @@ class SmsRepository(
                 "${Telephony.Sms.THREAD_ID} = ?",
                 arrayOf(threadId.toString())
             )
-            // Also update MMS? Harder, but usually thread-level read is sufficient.
         } catch (e: Exception) {
             e.printStackTrace()
         }
