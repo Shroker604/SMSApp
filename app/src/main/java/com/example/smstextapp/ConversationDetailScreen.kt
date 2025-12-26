@@ -23,8 +23,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -272,15 +271,31 @@ fun ConversationDetailScreen(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubble(
     message: SmsMessage, 
     onResendClick: (SmsMessage) -> Unit = {}
 ) {
+    var showDetails by remember { mutableStateOf(false) }
     val isSent = message.isSent
+    val isSending = message.type == android.provider.Telephony.Sms.MESSAGE_TYPE_OUTBOX || message.type == android.provider.Telephony.Sms.MESSAGE_TYPE_QUEUED
+    
     val alignment = if (isSent) Alignment.End else Alignment.Start
-    val color = if (isSent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
-    val textColor = if (isSent) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
+    
+    // Color Logic: Sending -> Light Gray, Sent -> Primary, Received -> SecondaryContainer
+    val color = when {
+        isSending -> Color.LightGray // Or MaterialTheme.colorScheme.surfaceVariant
+        isSent -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.secondaryContainer
+    }
+    
+    val textColor = when {
+        isSending -> Color.Black // Contrast for light gray
+        isSent -> MaterialTheme.colorScheme.onPrimary
+        else -> MaterialTheme.colorScheme.onSecondaryContainer
+    }
+
     val shape = if (isSent) {
         RoundedCornerShape(16.dp, 16.dp, 0.dp, 16.dp)
     } else {
@@ -299,16 +314,15 @@ fun MessageBubble(
             shape = shape,
             modifier = Modifier
                 .widthIn(max = 280.dp)
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onLongPress = {
-                            if (message.body.isNotBlank()) {
-                                clipboardManager.setText(AnnotatedString(message.body))
-                                android.widget.Toast.makeText(context, "Text copied", android.widget.Toast.LENGTH_SHORT).show()
-                            }
+                .combinedClickable(
+                    onClick = { showDetails = !showDetails },
+                    onLongClick = {
+                        if (message.body.isNotBlank()) {
+                            clipboardManager.setText(AnnotatedString(message.body))
+                            android.widget.Toast.makeText(context, "Text copied", android.widget.Toast.LENGTH_SHORT).show()
                         }
-                    )
-                }
+                    }
+                )
         ) {
             Column {
                 if (message.imageUri != null) {
@@ -316,63 +330,47 @@ fun MessageBubble(
                         model = message.imageUri,
                         contentDescription = "MMS Image",
                         modifier = Modifier
-                            .width(240.dp) // Fixed width to prevent measurement loop with parent Surface
+                            .width(240.dp)
                             .heightIn(min = 100.dp, max = 300.dp)
                             .clip(RoundedCornerShape(8.dp)),
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop
                     )
                 }
-                if (message.body.isNotBlank() && message.body != "Multimedia Message") {
+                
+                if (message.body.isNotBlank() && (message.imageUri == null || message.body != "Multimedia Message")) {
                     Text(
                         text = message.body,
                         color = textColor,
                         modifier = Modifier.padding(12.dp),
                         fontSize = 16.sp
                     )
-                } else if (message.imageUri == null) {
-                    // Fallback for text-only or failed parsing
-                     Text(
-                        text = message.body,
-                        color = textColor,
-                        modifier = Modifier.padding(12.dp),
-                        fontSize = 16.sp
-                    )
                 }
-                
-                // Timestamp
-                Text(
-                    text = com.example.smstextapp.utils.DateTimeUtils.formatMessageTime(message.date),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = textColor.copy(alpha = 0.7f),
-                    modifier = Modifier
-                        .padding(end = 8.dp, bottom = 4.dp)
-                        .align(Alignment.End),
-                    fontSize = 10.sp
-                )
             }
         }
         
-        if (isSent) {
-            val statusText = when (message.type) {
+        // Timestamp and Status info - Shown ONLY when tapped
+        if (showDetails || isSending || message.type == android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED) {
+            val time = com.example.smstextapp.utils.DateTimeUtils.formatMessageTime(message.date)
+            val status = when (message.type) {
                 android.provider.Telephony.Sms.MESSAGE_TYPE_OUTBOX -> "Sending..."
-                android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED -> "Failed (Tap to Resend)"
+                android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED -> "Failed"
                 android.provider.Telephony.Sms.MESSAGE_TYPE_QUEUED -> "Queued"
                 android.provider.Telephony.Sms.MESSAGE_TYPE_SENT -> "Sent"
-                else -> ""
+                else -> "" // Received or other
             }
             
-            if (statusText.isNotEmpty()) {
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (message.type == android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .padding(top = 2.dp, start = 4.dp, end = 4.dp)
-                        .clickable(enabled = message.type == android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED) {
-                            onResendClick(message)
-                        }
-                )
-            }
+            val infoText = if (isSent && status.isNotEmpty()) "$time • $status" else time
+
+            Text(
+                text = infoText,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (message.type == android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(top = 4.dp, start = 4.dp, end = 4.dp)
+                    .clickable(enabled = message.type == android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED) {
+                        if (message.type == android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED) onResendClick(message)
+                    }
+            )
         }
     }
 }
