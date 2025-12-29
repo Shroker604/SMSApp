@@ -87,4 +87,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    // MMS Library
+    implementation("com.klinkerapps:android-smsmms:5.2.6")
 }

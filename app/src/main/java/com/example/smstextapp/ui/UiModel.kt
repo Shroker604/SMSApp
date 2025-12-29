@@ -1,6 +1,6 @@
 package com.example.smstextapp.ui
 
-import com.example.smstextapp.SmsMessage
+import com.example.smstextapp.data.model.SmsMessage
 
 sealed class UiModel {
     data class MessageItem(val message: SmsMessage) : UiModel()

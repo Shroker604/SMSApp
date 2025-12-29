@@ -1,9 +1,9 @@
 package com.example.smstextapp.data
 
 import android.database.Cursor
+import com.example.smstextapp.data.model.Conversation
+import com.example.smstextapp.data.model.SmsMessage
 import android.provider.Telephony
-import com.example.smstextapp.Conversation
-import com.example.smstextapp.SmsMessage
 
 /**
  * Mapper extensions to convert Database Cursors into Domain Objects.

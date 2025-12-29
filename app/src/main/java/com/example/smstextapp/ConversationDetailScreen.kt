@@ -1,5 +1,6 @@
 package com.example.smstextapp
 
+import com.example.smstextapp.data.model.SmsMessage
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*

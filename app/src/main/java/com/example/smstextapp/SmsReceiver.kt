@@ -5,25 +5,37 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
 import androidx.core.app.NotificationCompat
+import kotlinx.coroutines.launch
 
 class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Telephony.Sms.Intents.SMS_DELIVER_ACTION) {
-            val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+            val pendingResult = goAsync()
+            val asyncScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
             
-            // Group by sender to handle multipart messages correctly
-            val messagesBySender = messages.groupBy { it.displayOriginatingAddress }
-            
-            messagesBySender.forEach { (sender, parts) ->
-                // Concatenate parts to form the full message body
-                val body = parts.joinToString(separator = "") { it.messageBody }
-                val timestamp = parts[0].timestampMillis
-                
-                // 1. Save to System Database (Required for Default App)
-                saveSmsToInbox(context, sender, body, timestamp)
-                
-                // 2. Show Notification
-                showNotification(context, sender, body)
+            asyncScope.launch {
+                try {
+                    val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+                    
+                    // Group by sender to handle multipart messages correctly
+                    val messagesBySender = messages.groupBy { it.displayOriginatingAddress }
+                    
+                    messagesBySender.forEach { (sender, parts) ->
+                        // Concatenate parts to form the full message body
+                        val body = parts.joinToString(separator = "") { it.messageBody }
+                        val timestamp = parts[0].timestampMillis
+                        
+                        // 1. Save to System Database (Required for Default App)
+                        saveSmsToInbox(context, sender, body, timestamp)
+                        
+                        // 2. Show Notification (Main thread for UI operations if needed, but NotificationManager is safe)
+                        showNotification(context, sender, body)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    pendingResult.finish()
+                }
             }
         }
     }

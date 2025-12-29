@@ -1,5 +1,6 @@
 package com.example.smstextapp
 
+import com.example.smstextapp.data.model.Conversation
 import android.Manifest
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add

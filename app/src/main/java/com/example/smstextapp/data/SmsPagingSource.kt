@@ -9,7 +9,7 @@ import android.os.Looper
 import android.provider.Telephony
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
-import com.example.smstextapp.SmsMessage
+import com.example.smstextapp.data.model.SmsMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -21,20 +21,11 @@ class SmsPagingSource(
 
     private val contentResolver: ContentResolver = context.contentResolver
 
-    // Observe changes to refresh the list
-    private var observer: ContentObserver? = null
 
-    init {
-        val handler = Handler(Looper.getMainLooper())
-        observer = object : ContentObserver(handler) {
-            override fun onChange(selfChange: Boolean) {
-                invalidate() // Paging 3 function to trigger reload
-            }
-        }
-        // Register observer for both SMS and MMS
-        contentResolver.registerContentObserver(Telephony.Sms.CONTENT_URI, true, observer!!)
-        contentResolver.registerContentObserver(Telephony.Mms.CONTENT_URI, true, observer!!)
-    }
+
+    // Observer removed to prevent leaks. Invalidation should be handled by external signal if possible,
+    // or by registering/unregistering carefully. 
+    // Since PagingSource doesn't have a reliable cleanup, we rely on invalidation calls from ViewModel/Repository.
 
     override fun getRefreshKey(state: PagingState<Int, SmsMessage>): Int? {
         return state.anchorPosition?.let { anchorPosition ->
@@ -72,7 +63,7 @@ class SmsPagingSource(
                 projection,
                 null, // Selection is implicit in URI
                 null,
-                "normalized_date DESC LIMIT $loadSize OFFSET $position"
+                "date DESC LIMIT $loadSize OFFSET $position"
             )
 
             if (cursor == null) {
@@ -83,7 +74,7 @@ class SmsPagingSource(
                  val typeColIdx = it.getColumnIndex("transport_type")
                  val idColIdx = it.getColumnIndex("_id")
                  val bodyColIdx = it.getColumnIndex("body")
-                 val dateColIdx = it.getColumnIndex("normalized_date")
+                 val dateColIdx = it.getColumnIndex("date")
                  val smsTypeColIdx = it.getColumnIndex("type")
                  val mmsBoxColIdx = it.getColumnIndex("msg_box") 
                  

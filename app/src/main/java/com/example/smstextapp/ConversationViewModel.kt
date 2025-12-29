@@ -23,7 +23,9 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import androidx.paging.filter
 import java.util.concurrent.ConcurrentHashMap
-import com.example.smstextapp.SmsMessage
+import com.example.smstextapp.data.model.Conversation
+import com.example.smstextapp.data.model.SmsMessage
+import com.example.smstextapp.SmsRepository
 import com.example.smstextapp.ui.UiModel
 
 class ConversationViewModel(
@@ -61,9 +63,15 @@ class ConversationViewModel(
     private val _selectedConversationId = MutableStateFlow<Long?>(null)
     val selectedConversationId: StateFlow<Long?> = _selectedConversationId
 
+    // Invalidation Trigger for Paging
+    private val _refreshTrigger = MutableStateFlow(0)
+    
     // Paging 3 Messages Flow with Separators
     @OptIn(ExperimentalCoroutinesApi::class)
-    val messages: Flow<PagingData<com.example.smstextapp.ui.UiModel>> = _selectedConversationId
+    val messages: Flow<PagingData<com.example.smstextapp.ui.UiModel>> = combine(
+        _selectedConversationId,
+        _refreshTrigger
+    ) { id, _ -> id }
         .flatMapLatest { threadId ->
             if (threadId == null) {
                 flowOf(PagingData.empty())
@@ -132,6 +140,16 @@ class ConversationViewModel(
                 }
             } catch (e: Exception) {
                 _conversationListState.value = com.example.smstextapp.ui.UiState.Error("Error flowing data: ${e.message}")
+            }
+        }
+        
+        // Listen for repository changes to refresh messages
+        viewModelScope.launch {
+            repository.messagesChangedFlow.collect {
+                // Determine if we need to refresh. Paging 3 doesn't have "reload".
+                // We re-emit to flatMapLatest by incrementing trigger.
+                // NOTE: This resets scroll position to bottom (newest). This is usually desired for new messages.
+                _refreshTrigger.value += 1
             }
         }
         
@@ -256,39 +274,59 @@ class ConversationViewModel(
     
     // Kept for manual refresh actions (sending) - Updates Conversation List
     private fun refreshMessages() {
+        // Now handled by repository calling triggerSync and emitting flow
         repository.triggerSync()
     }
 
     fun sendMessage(body: String) {
-        val address = _selectedConversationRawAddress.value
+        val rawAddress = _selectedConversationRawAddress.value
         val threadId = _selectedConversationId.value
-        if (address.isBlank()) return
+        if (rawAddress.isBlank()) return
+        
+        // Check for Group Chat (multiple recipients)
+        val recipients = rawAddress.split(";").filter { it.isNotBlank() }.toSet()
         
         viewModelScope.launch {
-            repository.sendMessage(address, body, threadId)
-            // Refresh messages
+            if (recipients.size > 1) {
+                // Group Chat -> MMS
+                repository.sendMmsMessage(recipients, body, null, threadId)
+            } else {
+                // Single Chat -> SMS
+                repository.sendMessage(rawAddress, body, threadId)
+            }
             refreshMessages()
         }
     }
 
     fun resendMessage(message: SmsMessage) {
-        val address = _selectedConversationRawAddress.value
+        val rawAddress = _selectedConversationRawAddress.value
         val threadId = _selectedConversationId.value ?: return
         
-        viewModelScope.launch {
-            repository.resendMessage(message.id, address, message.body, threadId)
-             // Refresh messages
-            refreshMessages()
+        // Logic for resend needs to match original type. 
+        // For now, simpler to treat as new send request.
+        if (message.isMms) {
+            // If it was MMS, we need to try and get content? 
+            // Or just resend text body if image is lost/not easily retrievable here?
+            // For robustness, let's just trigger sendMessage logic which decides.
+            // CAUTION: Asking user to re-attach image might be needed if we can't extract it easily.
+             sendMessage(message.body) // Fallback for now.
+        } else {
+            viewModelScope.launch {
+                repository.resendMessage(message.id, rawAddress, message.body, threadId)
+                refreshMessages()
+            }
         }
     }
 
     fun sendMms(body: String, uri: android.net.Uri) {
-         val address = _selectedConversationRawAddress.value
+         val rawAddress = _selectedConversationRawAddress.value
          val threadId = _selectedConversationId.value
-        if (address.isBlank()) return
+        if (rawAddress.isBlank()) return
+
+        val recipients = rawAddress.split(";").filter { it.isNotBlank() }.toSet()
 
         viewModelScope.launch {
-            repository.sendMessage(address, "$body [MMS Attachment: $uri]", threadId)
+            repository.sendMmsMessage(recipients, body, uri, threadId)
             refreshMessages()
         }
     }

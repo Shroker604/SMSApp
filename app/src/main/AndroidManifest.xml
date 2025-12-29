@@ -24,6 +24,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.SMSTextApp">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -52,34 +53,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- BroadcastReceiver that listens for incoming MMS messages -->
-        <receiver
-            android:name=".MmsReceiver"
-            android:exported="true"
-            android:permission="android.permission.BROADCAST_WAP_PUSH">
-            <intent-filter>
-                <action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" />
-                <data android:mimeType="application/vnd.wap.mms-message" />
-            </intent-filter>
-        </receiver>
 
-        <!-- Receiver for tracking Sent Status -->
-        <receiver
-            android:name=".SmsSentReceiver"
-            android:exported="true">
-             <intent-filter>
-                <action android:name="com.example.smstextapp.SMS_SENT" />
-            </intent-filter>
-        </receiver>
-
-        <!-- Receiver for MMS Download Completion -->
-        <receiver
-            android:name=".MmsDownloadedReceiver"
-            android:exported="true">
-             <intent-filter>
-                <action android:name="com.example.smstextapp.MMS_DOWNLOADED" />
-            </intent-filter>
-        </receiver>
 
         <!-- Service that handles sending MMS messages -->
         <service
@@ -95,6 +69,27 @@
                 <data android:scheme="mmsto" />
             </intent-filter>
         </service>
+
+        <!-- MMS Library Components (Klinker Apps) -->
+        <service android:name="com.android.mms.transaction.TransactionService" />
+
+        <receiver android:name="com.klinker.android.send_message.MmsSentReceiver"
+            android:taskAffinity=""
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.klinker.android.send_message.MMS_SENT" />
+                <!-- Implicitly handles result and writes to DB Provider -->
+            </intent-filter>
+        </receiver>
+
+        <receiver android:name="com.klinker.android.send_message.MmsReceivedReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_WAP_PUSH">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" />
+                <data android:mimeType="application/vnd.wap.mms-message" />
+            </intent-filter>
+        </receiver>
 
     </application>
 
